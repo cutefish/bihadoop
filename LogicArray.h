@@ -16,7 +16,12 @@
  * (2)There might be a design flaw here. Loader and Dumper should be compatible
  * or otherwise dumped data will not be loaded again. Users might not be aware
  * of that?
- * (3)
+ * (3)The user can access the logic array by operator(), however, this currently
+ * can only return a void* so that it is actually not very convenient and
+ * intuitive to for the user. This gives some disadvantage. However, this also
+ * gives an advantage that the user will not use this method frequently. 
+ * Instead they will further use the returned pointer so that we do not need to
+ * care too much about the efficiency of this method.
  */
 
 namespace logic_array {
