@@ -1,0 +1,4 @@
+#ifndef INCLUDE_STORAGE_H_
+#define INCLUDE_STORAGE_H_
+
+#endif /* INCLUDE_STORAGE_H_ */

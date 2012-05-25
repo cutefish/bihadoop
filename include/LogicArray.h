@@ -1,8 +1,9 @@
-#ifndef LOGICARRAY_H_
-#define LOGICARRAY_H_
+#ifndef INCLUDE_LOGICARRAY_H_
+#define INCLUDE_LOGICARRAY_H_
 
 #include <vector>
 
+#include "Storage.h"
 #include "SmallVector.h"
 
 /*!\file LogicArray.h
@@ -46,19 +47,27 @@ class Range {
   const unsigned& end() const;
   void end(const unsigned& end);
 
+ private:
+  unsigned m_start;
+  unsigned m_end;
 };
 
+class LogicArray;
+
 /*!\class Loader
- * \brief Loader for LogicArray. LogicArray uses this class to load a block of
- * data into local storage unit.
+ * \brief Loader for LogicArray. Each Loader object belongs to only one
+ * LogicArray object and that object uses the loader to load a block of data
+ * into local storage unit. \p local is a local pointer to put the block of
+ * data. The pointer is already prepared so that the size is enough.
  */
 class Loader {
  public:
-  virtual void load(void*, std::vector<Range>) = 0;
+  virtual void load(StorageHandler local, 
+                    StorageHandler std::vector<Range> block_range) = 0;
 };
 
 /*!\class DefaltLoader
- * \brief DefaultLoader simply load from a temporary file, create it if needed.
+ * \brief DefaultLoader simply created a temporary file.
  */
 class DefaultLoader : public Loader {
  public:
@@ -187,4 +196,4 @@ class LogicArrayBlock {
   std::vector<Range> m_ranges;
 }
 
-#endif /* LOGICARRAY_H_ */
+#endif /* INCLUDE_LOGICARRAY_H_ */
