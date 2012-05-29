@@ -27,29 +27,63 @@
 
 namespace logic_array {
 
-static const EntireDim = -1;
+static const int EntireDim = -1;
 
 } /* logic_array */
 
 /*!\class Range
- * \brief Represent an unsigned interval [start(), end()].
+ * \brief Represent an continuous interval [start(), end()], including both start
+ * and end.
  */
 class Range {
  public:
   /*** ctor/dtor ***/
-  Range();
-  Range(const unsigned& start, const unsigned& end);
+  Range(const unsigned& start, const unsigned& span);
   Range(const unsigned& pos);
 
   /*** getter/setter ***/
   const unsigned& start() const;
   void start(const unsigned& start);
   const unsigned& end() const;
-  void end(const unsigned& end);
+  const unsigned& span() const;
+  void span(const unsigned& span);
+
+  /*** member function ***/
+
+  /* hasOverlap()
+   * Return true if self have intersection with other.
+   */
+  bool hasOverlapWith(const Range& other);
+
+  /* contains()
+   * Return true if self contains other.
+   */
+  bool contains(const Range& other);
+
+  /* intersect()
+   * Return [max(other.start, self.start), min(other.end, self.end)].
+   * The validity of this operation should be checked before call.
+   * if there is no overlap, this operation is not valid.
+   */
+  Range intersect(const Range& other);
+
+  /* include()
+   * Return [min(other.start, self.start), max(other.end, self.end)]
+   * The validity of this operation should be checked before call.
+   * if there is no overlap, this operation is not valid.
+   */
+  Range include(const Range& other);
+
+  /* exclude()
+   * Return the range not in other, but in self. 
+   * The validity of this operation should be checked before call.
+   * if there is an inclusion relationship, this operation is also not valid.
+   */
+  Range exclude(const Range& other);
 
  private:
-  unsigned m_start;
-  unsigned m_end;
+  int m_start;
+  int m_end;
 };
 
 class LogicArray;
@@ -87,41 +121,6 @@ class Dumper {
  */
 class DefaultLoader : public Loader {
   virtual void dump(std::vector<Range>);
-};
-
-/*!\class BlockManager
- * \brief Manage logic array blocks, check if it is in local storage, combine
- * blocks if necessary
- */
-class BlockManager {
- public:
-  /** ctor/dtor ***/
-  BlockManager(unsigned num_dims);
-
-  /*** member fucntions ***/
-  /* getter/setter */
-  const size_t& capacity() const;
-  void capacity(const size_t& c);
-
-  /* isLocal() */
-  bool isLocal(std::vector<Range>);
-
-  /* combine()
-   * Combine ranges in the list to get a continuous address space for the
-   * blocks.
-   */
-  void combine();
-
-  /* diff()
-   * Get a diff between \param Range and local so that we can bring a new block
-   * having no intersection with the local ones.
-   */
-  std::vector<Range> diff(std::vector<Range>);
-
- private:
-  std::list<Range> m_localblocks;
-  unsigned m_numdims;
-  size_t m_capacity;
 };
 
 /*!\class LogicArray
@@ -167,12 +166,13 @@ class LogicArray {
 };
 
 /*!\class LogicArrayBlock
- * \brief A block of the logic array. This is just a wrapper to enable easier
- * interface.
+ * \brief A block of the logic array. An interface to calculate the overlap
+ * relationships.
  */
 class LogicArrayBlock {
  public:
   /*** ctor/dtor ***/
+  LogicArrayBlock();
   LogicArrayBlock(const LogicArray& array,
                   const std::vector<Range>& ranges);
 
@@ -180,6 +180,28 @@ class LogicArrayBlock {
   /* getter/setter */
   const LogicArray& array() const;
   const std::vector<Range>& ranges() const;
+  size_t size() const;
+
+  /* hasOverlap()
+   * Return true if self have intersection with other.
+   */
+  bool hasOverlapWith(const LogicArrayBlock& other);
+
+  /* contains()
+   * Return true if self contains other.
+   */
+  bool contains(const LogicArrayBlock& other);
+
+  /* diff()
+   * Compare this block with other.
+   * Return a vector of diff blocks and store the diff size(negative if
+   * smaller).
+   */
+  std::vector<LogicArrayBlock> diff(const LogicArrayBlock& other, 
+                                    size_t& diff_size);
+
+  /* expand()
+   */
 
   /* load()
    * A wrapper of LogicArray load()
@@ -192,8 +214,16 @@ class LogicArrayBlock {
   void dump();
 
  private:
+  /*** member variables ***/
   LogicArray* m_array;
   std::vector<Range> m_ranges;
+
+  /*** private funcitons ***/
+  /* intersect()
+   * Return the intersection of self and other.
+   */
+  LogicArrayBlock intersect(const LogicArrayBlock& other);
+
 }
 
 #endif /* INCLUDE_LOGICARRAY_H_ */

@@ -1,0 +1,42 @@
+>>bring a large chunk of data than the diff
+e.g. geocorr each continuous window diffs one float
+what is the size then?
+and which dimension?
+
+>>amortized load cost.
+e.g. if load a size S chunk will calculate K kernels, the load cost is only S/K.
+
+20120528
+
+(1) LogicArray load and dump. The first time to construct a block of a logic
+array should be defined by user, e.g., template(tempNo, chnlNo, : ) is defined
+by the user to read from file <data_root>/tempNo/chnlNo/<filename> and to fetch
+points according to a configuration(400 previously). However, if that block is
+modified, e.g. the user wants to substract a mean value for each point of the
+data. We might have to dump that array into a temporary file. In that case, we
+need to track which blocks have been modified and which are not. Unmodified
+blocks are loaded using user defined functions; modified arrays are loaded from
+temporary files. That is we keep a list of blocks that have been modified into
+the LogicArray object. When a we need to load a block, we iterate through the
+list and check if any part of the block is modified.
+
+(2) LogicArrayBlock load operation. With the current design, when we load a
+logic array block we check if all the elements in the block is local, if not,
+we load what is not there. This design has the following problem. If the
+difference between two consecutive loads is small, for example, each
+correlation will compute a window of continuous wave form. Two consecutive
+continuous waveform has a difference of only one float. In that case, if we
+invoke the load function each time, we would end up loading float number one by
+one. There are two solutions to this problem: (i) just like how it works with
+cache and memory, we load a larger chunk if the difference is too small. For
+example, we load 128k of float numbers each time we find the need to load. (ii)
+this problem is because of the nature of my previous design. Designing it in
+another way might avoid the problem, for example, a prefetch method?
+
+(3) LogicArrayBlock usage. This may relate to the second problem. My current
+interface for the user to access a block is \object LogicArray(range_list), and
+this method will return a pointer pointing to the first address of the local
+data. The problem for this interface is, the user cannot access the data
+correctly if this block is a subblock in the local. The offset would all be
+wrong. A solution would be provide another local interface for the user to
+access.
