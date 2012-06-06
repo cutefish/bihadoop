@@ -209,32 +209,33 @@ typedef std::vector<Data> DataVector;
 
 template<typename VectorType>
 struct ThreadArgs {
-  support::Logger& logger;
-  support::TimingEvent& timer;
-  WorkQueue<Work>& work_queue;
-  VectorType& temp_vector;
-  VectorType& cont_vector;
+  support::Logger* logger;
+  support::TimingEvent* timer;
+  WorkQueue<Work>* work_queue;
+  VectorType* temp_vector;
+  VectorType* cont_vector;
 };
 
 template<typename VectorType>
 void doWork(support::ThreadPool* pool,
             int tid,
-            ThreadArgs<VectorType>* thread_args) {
-    if (thread_args->work_queue.testEmpty()) {
-      pool->exit();
-      return;
-    }
-    Work work = thread_args->work_queue.dequeue();
-    thread_args->logger.info("get work >> temp: " + 
-                             support::Type2String<int>(work.temp_idx) + 
-                             '\t' + "cont: " + 
-                             support::Type2String<int>(work.cont_idx) + '\n');
-    thread_args->timer.restart();
-    Data corr = gc(thread_args->temp_vector[work.temp_idx], 
-                   thread_args->temp_vector[work.cont_idx]);
-    thread_args->timer.pause();
-    delete [] corr.data;
-    thread_args->logger.info("finished\n");
+            void* args) {
+  ThreadArgs<VectorType>* thread_args = (ThreadArgs<VectorType>*) args;
+  if (thread_args->work_queue->testEmpty()) {
+    pool->exit();
+    return;
+  }
+  Work work = thread_args->work_queue->dequeue();
+  thread_args->logger->info("get work >> temp: " + 
+                            support::Type2String<int>(work.temp_idx) + 
+                            '\t' + "cont: " + 
+                            support::Type2String<int>(work.cont_idx) + '\n');
+  thread_args->timer->restart();
+  Data corr = gc((*(thread_args->temp_vector))[work.temp_idx], 
+                 (*(thread_args->cont_vector))[work.cont_idx]);
+  thread_args->timer->pause();
+  delete [] corr.data;
+  thread_args->logger->info("finished\n");
 }
 
 /*** main ***/
@@ -319,11 +320,11 @@ int main(int argc, char* argv[]) {
         support::TimingSys::get("threadEvent" + support::Type2String<int>(i));
     ThreadArgs<PathVector>* path_args = new ThreadArgs<PathVector>;
     ThreadArgs<DataVector>* ptr_args = new ThreadArgs<DataVector>;
-    path_args->logger = logger; ptr_args->logger = logger;
-    path_args->timer = timer; ptr_args->timer = timer;
-    path_args->work_queue = work_queue; ptr_args->work_queue = work_queue;
-    path_args->temp_vector = temp_file_vector; ptr_args->temp_vector = temp_ptr_vector;
-    path_args->cont_vector = cont_file_vector; ptr_args->cont_vector = cont_ptr_vector;
+    path_args->logger = &logger; ptr_args->logger = &logger;
+    path_args->timer = &timer; ptr_args->timer = &timer;
+    path_args->work_queue = &work_queue; ptr_args->work_queue = &work_queue;
+    path_args->temp_vector = &temp_file_vector; ptr_args->temp_vector = &temp_ptr_vector;
+    path_args->cont_vector = &cont_file_vector; ptr_args->cont_vector = &cont_ptr_vector;
     if (work_type == WorkOnPath) {
       user_args.push_back((void*)path_args);
     }
@@ -335,16 +336,23 @@ int main(int argc, char* argv[]) {
   //create thread pool
   support::TimingSys::newEvent("calculate total time");
   support::TimingSys::startEvent("calculate total time");
-  support::ThreadAttr attr;
+  support::ThreadsAttr attr;
   support::ThreadPool pool(num_threads, attr);
-  pool.set(doWork, user_args);
+  if (work_type == WorkOnPath) {
+    void (*doWorkFunc)(support::ThreadPool*, int, void*) = &doWork<PathVector>;
+    pool.set(doWorkFunc, user_args);
+  }
+  else if (work_type == WorkOnPtr) {
+    void (*doWorkFunc)(support::ThreadPool*, int, void*) = &doWork<DataVector>;
+    pool.set(doWorkFunc, user_args);
+  }
   pool.execute();
   pool.join();
   support::TimingSys::endEvent("calculate total time");
 
   //output timing
   support::Logger& logger = support::LogSys::newLogger("perf");
-  support::HandlerRef& hdlr = support::FileHandler::create("gc_out/perf");
+  support::HandlerRef hdlr = support::FileHandler::create("gc_out/perf");
   logger.addHandler(hdlr);
   for (support::TimingSys::iterator it = support::TimingSys::begin();
        it != support::TimingSys::end(); ++it) {
