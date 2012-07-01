@@ -9,20 +9,22 @@ public class FileCacheClient {
       System.exit(1);
     }
     Socket s = null;
+    DataInputStream in = null;
     DataOutputStream out = null;
-    try {
-      s = new Socket("localhost", 4444);
-      out = new DataOutputStream(s.getOutputStream());
-    }
-    catch (Exception e) {
-      throw new RuntimeException(e);
-    }
     String outString = args[0];
     byte[] buffer = outString.getBytes();
     while(true) {
       try {
+        s = new Socket("localhost", 4444);
+        out = new DataOutputStream(s.getOutputStream());
+        in = new DataInputStream(s.getInputStream());
         out.write(buffer);
+        byte[] inBuffer = new byte[1024];
+        in.read(inBuffer);
+        String path = new String(inBuffer);
+        System.out.println(path);
         Thread.sleep(10000);
+        s.close();
       }
       catch (Exception e) {
         System.out.println(e);
