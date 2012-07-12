@@ -1,0 +1,75 @@
+<project name="MRCaching" default="compile">
+
+    <!--Specify external class path-->
+    <property name="external.hadoop.home" location="/Hadoop/hadoop-1.0.3" />
+    <path id="external.hadoop.classpath">
+        <pathelement location="${external.hadoop.home}/build/classes"/>
+        <pathelement location="${external.hadoop.home}/conf"/>
+        <fileset dir="${external.hadoop.home}/lib" includes="**/*.jar"/>
+    </path>
+
+    <!--Properties-->
+    <property name="src.dir" value="${basedir}/src/java"/>
+    <property name="mapred.src.dir" value="${src.dir}/mapred"/> 
+    <property name="hdfs.src.dir" value="${src.dir}/hdfs"/> 
+
+    <property name="build.dir" value="${basedir}/build"/>
+    <property name="build.classes" value="${build.dir}/classes"/>
+
+    <property name="test.src.dir" value="${basedir}/test"/>
+    <property name="test.build.dir" value="${build.dir}/test"/>
+    <property name="test.build.classes" value="${test.build.dir}/classes"/>
+
+    <!--Project classpath-->
+    <path id="classpath">
+        <pathelement location="${build.classes}"/>
+        <path refid="external.hadoop.classpath"/>
+        <pathelement location="${test.build.classes}"/>
+    </path>
+
+    <!--Targets-->
+    <target name="init">
+        <mkdir dir="${build.dir}"/>
+        <mkdir dir="${build.classes}"/>
+        <mkdir dir="${test.build.dir}"/>
+        <mkdir dir="${test.build.classes}"/>
+    </target>
+
+    <target name="compile-hdfs-classes" depends="init">
+        <javac
+            srcdir="${hdfs.src.dir}"
+            includes="org/apache/hadoop/**/*.java"
+            destdir="${build.classes}">
+            <classpath refid="classpath"/>
+        </javac>
+    </target>
+
+    <target name="compile-mapred-classes" depends="compile-hdfs-classes">
+        <javac
+            srcdir="${mapred.src.dir}"
+            includes="org/apache/hadoop/**/*.java"
+            destdir="${build.classes}">
+            <classpath refid="classpath"/>
+        </javac>
+    </target>
+
+    <target name="compile-test" depends="compile-mapred-classes, compile-hdfs-classes">
+        <javac
+            srcdir="${test.src.dir}"
+            includes="**/*.java"
+            destdir="${test.build.classes}">
+            <classpath refid="classpath"/>
+        </javac>
+    </target>
+
+    <target name="compile" depends="compile-test">
+    </target>
+
+    <target name="runtest" depends="compile-test">
+        <java
+            classname="${classname}">
+            <classpath refid="classpath"/>
+        </java>
+    </target>
+
+</project>
