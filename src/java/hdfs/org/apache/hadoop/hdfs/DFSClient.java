@@ -564,6 +564,13 @@ public class DFSClient implements FSConstants, java.io.Closeable {
     return open(src, conf.getInt("io.file.buffer.size", 4096), true, null);
   }
 
+  //added by xyu40@gatech.edu
+  public DFSInputStream openCachedReadOnly(String src) throws IOException {
+    DFSInputStream in = open(src, conf.getInt("io.file.buffer.size", 4096), true, null);
+    in.cacheReadOnly = true;
+    return in;
+  }
+
   /**
    * Create an input stream that obtains a nodelist from the
    * namenode, and then reads from all the right places.  Creates
@@ -1799,6 +1806,9 @@ public class DFSClient implements FSConstants, java.io.Closeable {
     private Block currentBlock = null;
     private long pos = 0;
     private long blockEnd = -1;
+
+    //added by xyu40@gatech.edu
+    private boolean cacheReadOnly = false;
 
     /**
      * This variable tracks the number of failures since the start of the

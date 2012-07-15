@@ -418,6 +418,16 @@ public abstract class FileSystem extends Configured implements Closeable {
    */
   public abstract FSDataInputStream open(Path f, int bufferSize)
     throws IOException;
+
+  //Added by xyu40@gatech.edu
+  /**
+   * Opens an Cached FSDatainputStream at the indicated Path.
+   * Only cached for Hdfs, and thus is overrided by DistributedFileSystem.
+   */
+  public FSDataInputStream openCachedReadOnly(Path f, int bufferSize) 
+      throws IOException {
+    return open(f, bufferSize);
+  }
     
   /**
    * Opens an FSDataInputStream at the indicated Path.
