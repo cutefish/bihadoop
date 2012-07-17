@@ -59,15 +59,19 @@ public interface BlockCacheProtocol extends VersionedProtocol {
     public String getLocalPath() {
       return localPath;
     }
+
+    public void setLocalPath(String path) {
+      localPath = path;
+    }
   }
 
   /**
-   * Returns the local cached block file path string.
+   * Returns the CachedBlock object containing cache information.
    * 
    * The block contains the position required.
    * Throw IOException if cannot cache.
    */
-  CachedBlock getCachedBlockFile(String src, long pos) throws IOException;
+  CachedBlock getCachedBlock(String src, long pos) throws IOException;
 
   ///**
   // * Heartbeat to keep local file exist.

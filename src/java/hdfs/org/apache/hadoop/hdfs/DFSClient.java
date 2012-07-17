@@ -567,7 +567,7 @@ public class DFSClient implements FSConstants, java.io.Closeable {
   //added by xyu40@gatech.edu
   public DFSInputStream openCachedReadOnly(String src) throws IOException {
     DFSInputStream in = open(src, conf.getInt("io.file.buffer.size", 4096), true, null);
-    in.cacheReadOnly = true;
+    in.setCacheReadOnly();
     return in;
   }
 
@@ -1844,6 +1844,10 @@ public class DFSClient implements FSConstants, java.io.Closeable {
       openInfo();
     }
 
+    public void setCacheReadOnly() {
+      cacheReadOnly = true;
+    }
+
     /**
      * Grab the open-file info from namenode
      */
@@ -1951,7 +1955,10 @@ public class DFSClient implements FSConstants, java.io.Closeable {
      * @return located block
      * @throws IOException
      */
-    private synchronized LocatedBlock getBlockAt(long offset,
+    //modified by xyu40@gatech.edu
+    //change private to protected so that BlockCacheServer can use
+    //end xyu40@gatech.edu
+    protected synchronized LocatedBlock getBlockAt(long offset,
         boolean updatePosition) throws IOException {
       assert (locatedBlocks != null) : "locatedBlocks is null";
       // search cached blocks first
@@ -2101,6 +2108,26 @@ public class DFSClient implements FSConstants, java.io.Closeable {
           }
         }
 
+        //added by xyu40@gatech.edu
+        // try using cache. if this fails, then go via the datanode.
+        // N.B.
+        // 1. the chosenNode now is not actually used for read, so 
+        // return null here. This makes the fail of cache server untrackable.
+        // Let's first hope cache server failure is impossible to happen
+        // right now.
+        // 2. this might have some inefficiency since the cache server
+        // will go through the block search all again, however, the
+        // assumption is the block should already be cached in common case.
+        if (cacheReadOnly) {
+          try {
+            blockReader = new BlockCacheReader(conf, src, target);
+            return null;
+          } catch (IOException e) {
+            LOG.info("Cache reader failed, try remote method");
+          }
+        }
+        //end xyu40@gatech.edu
+
         try {
           s = socketFactory.createSocket();
           NetUtils.connect(s, targetAddr, socketTimeout);
@@ -2205,8 +2232,18 @@ public class DFSClient implements FSConstants, java.io.Closeable {
            */ 
           sourceFound = seekToBlockSource(pos);
         } else {
-          addToDeadNodes(currentNode);
-          sourceFound = seekToNewSource(pos);
+          //modified by xyu40@gatech.edu
+          //addToDeadNodes(currentNode);
+          //sourceFound = seekToNewSource(pos);
+          if (currentNode != null) {
+            addToDeadNodes(currentNode);
+            sourceFound = seekToNewSource(pos);
+          }
+          else {
+            //null means cache is used.
+            sourceFound = seekToBlockSource(pos);
+          }
+          //end xyu40@gatech.edu
         }
         if (!sourceFound) {
           throw ioe;
@@ -2330,7 +2367,20 @@ public class DFSClient implements FSConstants, java.io.Closeable {
               shortCircuitLocalReads = false;
               continue;
             }
-          } else {
+          }
+          //added by xyu40@gatech.edu
+          if (cacheReadOnly) {
+            try {
+              reader = new BlockCacheReader(conf, src, start);
+              //assuming cache read will never fail, do not track.
+              chosenNode = null;
+            }
+            catch (IOException e) {
+              LOG.info("Cache reader failed, try remote method");
+            }
+          } 
+          //end xyu40@gatech.edu
+          else {
             // go to the datanode
             dn = socketFactory.createSocket();
             NetUtils.connect(dn, targetAddr, socketTimeout);
@@ -2367,8 +2417,13 @@ public class DFSClient implements FSConstants, java.io.Closeable {
           IOUtils.closeStream(reader);
           IOUtils.closeSocket(dn);
         }
+
         // Put chosen node into dead list, continue
-        addToDeadNodes(chosenNode);
+        //modified by xyu40@gatech.edu
+        //addToDeadNodes(chosenNode);
+        if (chosenNode != null) {
+          addToDeadNodes(chosenNode);
+        }
       }
     }
 
@@ -2443,6 +2498,7 @@ public class DFSClient implements FSConstants, java.io.Closeable {
         throw new IOException("Cannot seek after EOF");
       }
       boolean done = false;
+
       if (pos <= targetPos && targetPos <= blockEnd) {
         //
         // If this seek is to a positive position in the current
@@ -2450,7 +2506,11 @@ public class DFSClient implements FSConstants, java.io.Closeable {
         // the TCP buffer, then just eat up the intervening data.
         //
         int diff = (int)(targetPos - pos);
-        if (diff <= TCP_WINDOW_SIZE) {
+        //modified by xyu40@gatech.edu
+        //if (diff <= TCP_WINDOW_SIZE) {
+        if ((diff <= TCP_WINDOW_SIZE) ||
+            (blockReader instanceof BlockCacheReader)) {
+        //end xyu40@gatech.edu
           try {
             pos += blockReader.skip(diff);
             if (pos == targetPos) {

@@ -130,6 +130,10 @@ import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.VersionInfo;
 import org.mortbay.util.ajax.JSON;
 
+//added by xyu40@gatech.edu
+import org.apache.hadoop.hdfs.blockcache.BlockCacheServer;
+//end xyu40@gatech.edu
+
 /**********************************************************
  * DataNode is a class (and program) that stores a set of
  * blocks for a DFS deployment.  A single deployment can
@@ -232,6 +236,10 @@ public class DataNode extends Configured
   BlockTokenSecretManager blockTokenSecretManager;
   boolean isBlockTokenInitialized = false;
   final String userWithLocalPathAccess;
+
+  //added by xyu40@gatech.edu
+  BlockCacheServer blockCacheServer;
+  //end xyu40@gatech.edu
 
   /**
    * Testing hook that allows tests to delay the sending of blockReceived RPCs
@@ -800,6 +808,10 @@ public class DataNode extends Configured
     }
     if (myMetrics != null) {
       myMetrics.shutdown();
+    }
+
+    if (blockCacheServer != null) {
+      blockCacheServer.shutdown();
     }
   }
   
@@ -1538,6 +1550,11 @@ public class DataNode extends Configured
             Configuration conf, SecureResources resources) throws IOException {
     DataNode dn = instantiateDataNode(args, conf, resources);
     runDatanodeDaemon(dn);
+    //added by xyu40@gatech.edu
+    //start a block cache server.
+    blockCacheServer = new BlockCacheServer(conf);
+    blockCacheServer.start();
+    //end xyu40@gatech.edu
     return dn;
   }
 

@@ -17,6 +17,7 @@ public class BlockCacheReader extends BlockReader {
   public static final Log LOG = LogFactory.getLog(BlockCacheReader.class);
 
   private static final String LOCAL_HOST = "127.0.0.1";
+  private static final String SERVER_PORT = "block.cache.server.port";
 
   ////50ms heartbeat to keep file exist
   //private static final long heartbeatInterval = 50; 
@@ -33,13 +34,13 @@ public class BlockCacheReader extends BlockReader {
                           String src, long pos) throws IOException {
     super(new Path("/blk_of_" + src + "_at_" + pos), 1);
     this.src = src;
-    int port = conf.getInt("block.cache.server.port", 50200);
+    int port = conf.getInt(SERVER_PORT, DEFAULT_SERVER_PORT);
     InetSocketAddress serverAddr = new InetSocketAddress(LOCAL_HOST, port);
     cacheServer = (BlockCacheProtocol)RPC.getProxy(
         BlockCacheProtocol.class, BlockCacheProtocol.versionID,
         serverAddr, conf);
     try {
-      block = cacheServer.getCachedBlockFile(src, pos);
+      block = cacheServer.getCachedBlock(src, pos);
     }
     catch (IOException e) {
       LOG.warn("BlockCacheServer connect failure at" + 
@@ -87,12 +88,16 @@ public class BlockCacheReader extends BlockReader {
 
   @Override
   public synchronized int read(byte[] buf, int off, int len) throws IOException {
-    return dataIn.read(buf, off, len);
+    int n = dataIn.read(buf, off, len);
+    posInBlock += n;
+    return n;
   }
 
   @Override
-  public synchronized int skip(long n) throws IOException {
-    return dataIn.skip(n);
+  public synchronized long skip(long n) throws IOException {
+    long actualSkip = dataIn.skip(n);
+    posInBlock += n;
+    return actualSkip;
   }
 
   public synchronized void seek(long n) throws IOException {
