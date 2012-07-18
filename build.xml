@@ -79,6 +79,7 @@
         <java
             fork="true"
             classname="${classname}">
+            <arg line="${classargs}"/>
             <classpath refid="classpath"/>
         </java>
     </target>
@@ -88,6 +89,22 @@
             <fileset dir="${src.dir}">
                 <include name="**/*.java"/>
             </fileset>
+        </copy>
+    </target>
+
+    <target name="grab">
+        <path id="local.files">
+            <fileset dir="${src.dir}" includes="**/*.java"/>
+        </path>
+        <pathconvert pathsep=", " property="file.list" refid="local.files">
+            <mapper type="regexp" 
+                from="^${src.dir}/(.*)\.java$$" 
+                to="\1.java"/>
+        </pathconvert>
+        <copy todir="${src.dir}">
+            <path id="external.files">
+                <fileset dir="${external.hadoop.home}/src" includes="${file.list}"/>
+            </path>
         </copy>
     </target>
 
