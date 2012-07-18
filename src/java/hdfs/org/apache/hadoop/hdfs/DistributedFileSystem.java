@@ -164,6 +164,7 @@ public class DistributedFileSystem extends FileSystem {
           dfs.openCachedReadOnly(getPathName(f), bufferSize, 
                                  verifyChecksum, statistics));
   }
+  //end xyu40@gatech.edu
 
   /** 
    * Start the lease recovery of a file

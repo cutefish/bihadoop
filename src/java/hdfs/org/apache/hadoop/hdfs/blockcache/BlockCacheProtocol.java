@@ -1,5 +1,7 @@
 package org.apache.hadoop.hdfs.blockcache;
 
+import java.io.IOException;
+
 import org.apache.hadoop.ipc.VersionedProtocol;
 
 //xyu40@gatech.edu
@@ -10,6 +12,7 @@ import org.apache.hadoop.ipc.VersionedProtocol;
 public interface BlockCacheProtocol extends VersionedProtocol {
 
   public static final long versionID = 01L;
+  public static final int DEFAULT_SERVER_PORT = 50200;
 
   /**
    * This is a wrapper for the information passed between server and client.
@@ -40,9 +43,6 @@ public interface BlockCacheProtocol extends VersionedProtocol {
     public int hashCode() {
       return fileName.hashCode() ^ (new Long(startOffset)).hashCode();
     }
-
-    @Override 
-    public int 
 
     public String getFileName() {
       return fileName;

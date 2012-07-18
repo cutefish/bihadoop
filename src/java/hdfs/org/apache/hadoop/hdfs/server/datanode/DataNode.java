@@ -511,6 +511,14 @@ public class DataNode extends Configured
     dnRegistration.setIpcPort(ipcServer.getListenerAddress().getPort());
 
     LOG.info("dnRegistration = " + dnRegistration);
+
+
+    //added by xyu40@gatech.edu
+    //start a block cache server.
+    blockCacheServer = new BlockCacheServer(conf);
+    blockCacheServer.start();
+    //end xyu40@gatech.edu
+
   }
   
   private ObjectName mxBean = null;
@@ -810,9 +818,11 @@ public class DataNode extends Configured
       myMetrics.shutdown();
     }
 
+    //added by xyu40@gatech.edu
     if (blockCacheServer != null) {
       blockCacheServer.shutdown();
     }
+    //end xyu40@gatech.edu
   }
   
   
@@ -1550,11 +1560,6 @@ public class DataNode extends Configured
             Configuration conf, SecureResources resources) throws IOException {
     DataNode dn = instantiateDataNode(args, conf, resources);
     runDatanodeDaemon(dn);
-    //added by xyu40@gatech.edu
-    //start a block cache server.
-    blockCacheServer = new BlockCacheServer(conf);
-    blockCacheServer.start();
-    //end xyu40@gatech.edu
     return dn;
   }
 

@@ -12,6 +12,7 @@
     <property name="src.dir" value="${basedir}/src/java"/>
     <property name="mapred.src.dir" value="${src.dir}/mapred"/> 
     <property name="hdfs.src.dir" value="${src.dir}/hdfs"/> 
+    <property name="core.src.dir" value="${src.dir}/core"/> 
 
     <property name="build.dir" value="${basedir}/build"/>
     <property name="build.classes" value="${build.dir}/classes"/>
@@ -35,7 +36,16 @@
         <mkdir dir="${test.build.classes}"/>
     </target>
 
-    <target name="compile-hdfs-classes" depends="init">
+    <target name="compile-core-classes" depends="init">
+        <javac
+            srcdir="${core.src.dir}"
+            includes="org/apache/hadoop/**/*.java"
+            destdir="${build.classes}">
+            <classpath refid="classpath"/>
+        </javac>
+    </target>
+
+    <target name="compile-hdfs-classes" depends="compile-core-classes">
         <javac
             srcdir="${hdfs.src.dir}"
             includes="org/apache/hadoop/**/*.java"
@@ -71,6 +81,14 @@
             classname="${classname}">
             <classpath refid="classpath"/>
         </java>
+    </target>
+
+    <target name="apply">
+        <copy todir="${external.hadoop.home}/src">
+            <fileset dir="${src.dir}">
+                <include name="**/*.java"/>
+            </fileset>
+        </copy>
     </target>
 
 </project>

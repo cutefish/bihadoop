@@ -60,6 +60,10 @@ import java.nio.ByteBuffer;
 
 import javax.net.SocketFactory;
 
+//added by xyu40@gatech.edu
+import org.apache.hadoop.hdfs.blockcache.BlockCacheReader;
+//end xyu40@gatech.edu
+
 /********************************************************
  * DFSClient can connect to a Hadoop Filesystem and 
  * perform basic file tasks.  It uses the ClientProtocol
@@ -565,8 +569,11 @@ public class DFSClient implements FSConstants, java.io.Closeable {
   }
 
   //added by xyu40@gatech.edu
-  public DFSInputStream openCachedReadOnly(String src) throws IOException {
-    DFSInputStream in = open(src, conf.getInt("io.file.buffer.size", 4096), true, null);
+  public DFSInputStream openCachedReadOnly(
+      String src, int bufferSize, 
+      boolean verifyChecksum, FileSystem.Statistics stats
+      ) throws IOException {
+    DFSInputStream in = open(src, bufferSize, verifyChecksum, stats);
     in.setCacheReadOnly();
     return in;
   }
@@ -1955,10 +1962,7 @@ public class DFSClient implements FSConstants, java.io.Closeable {
      * @return located block
      * @throws IOException
      */
-    //modified by xyu40@gatech.edu
-    //change private to protected so that BlockCacheServer can use
-    //end xyu40@gatech.edu
-    protected synchronized LocatedBlock getBlockAt(long offset,
+    private synchronized LocatedBlock getBlockAt(long offset,
         boolean updatePosition) throws IOException {
       assert (locatedBlocks != null) : "locatedBlocks is null";
       // search cached blocks first
@@ -1980,6 +1984,13 @@ public class DFSClient implements FSConstants, java.io.Closeable {
       }
       return blk;
     }
+
+    //modified by xyu40@gatech.edu
+    public synchronized LocatedBlock getBlockAtPublic(long offset) 
+      throws IOException {
+      return getBlockAt(offset, false);
+    }
+    //end xyu40@gatech.edu
 
     /** Fetch a block from namenode and cache it */
     private synchronized void fetchBlockAt(long offset) throws IOException {

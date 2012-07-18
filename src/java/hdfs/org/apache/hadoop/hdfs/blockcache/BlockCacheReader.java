@@ -5,7 +5,6 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSClient.BlockReader;
-import org.apache.hadoop.hdfs.LocatedBlock;
 import org.apache.hadoop.ipc.RPC;
 
 import java.io.*;
@@ -32,9 +31,10 @@ public class BlockCacheReader extends BlockReader {
 
   public BlockCacheReader(Configuration conf, 
                           String src, long pos) throws IOException {
-    super(new Path("/blk_of_" + src + "_at_" + pos), 1);
+    super(new Path("/blk_of_" + src + "_at_" + pos), 1, null, false);
     this.src = src;
-    int port = conf.getInt(SERVER_PORT, DEFAULT_SERVER_PORT);
+    int port = conf.getInt(SERVER_PORT, 
+        BlockCacheProtocol.DEFAULT_SERVER_PORT);
     InetSocketAddress serverAddr = new InetSocketAddress(LOCAL_HOST, port);
     cacheServer = (BlockCacheProtocol)RPC.getProxy(
         BlockCacheProtocol.class, BlockCacheProtocol.versionID,
@@ -81,7 +81,7 @@ public class BlockCacheReader extends BlockReader {
       LOG.debug("New BlockCacheReader for file: " + src + 
           " at position: " + pos + 
           " with startOffset: " + block.getStartOffset() + 
-          " length: " + block.getLength() +
+          " length: " + block.getBlockLength() +
           " at local: " + block.getLocalPath());
     }
   }
