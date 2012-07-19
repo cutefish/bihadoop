@@ -282,7 +282,9 @@ public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
     if (!shouldConstuct) {
       synchronized(cachedValue) {
         try {
-          cachedValue.wait();
+          if (cachedValue.getTimestamp() == UNDER_CONSTRUCTION) {
+            cachedValue.wait();
+          }
         }
         catch (InterruptedException e) {
         }
