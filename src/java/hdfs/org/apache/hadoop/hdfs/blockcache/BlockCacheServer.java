@@ -28,6 +28,7 @@ public class BlockCacheServer extends DFSClient
   private static final Log LOG = LogFactory.getLog(BlockCacheServer.class);
 
   private static final String SERVER_PORT = "block.cache.server.port";
+  private static final String SERVER_NHANDLEER = "block.cache.server.num.handler";
   private static final String CACHE_CAPACITY = "block.cache.capacity";
   private static final String MMAP_CACHED_FILE = "mmap.cached.file";
   private static final String LOCAL_DIR = "block.cache.local.dir";
@@ -111,7 +112,9 @@ public class BlockCacheServer extends DFSClient
     //rpc server
     int port = conf.getInt(SERVER_PORT, 
         BlockCacheProtocol.DEFAULT_SERVER_PORT);
-    this.rpcListener = RPC.getServer(this, LOCAL_HOST, port, conf);
+    int numHandler = conf.getInt(SERVER_NHANDLEER, 3);
+    this.rpcListener = RPC.getServer(this, LOCAL_HOST, port, 
+        numHandler, false, conf);
 
     //local dir
     this.localCacheDir = conf.get(LOCAL_DIR, "/tmp/hadoop-xyu40/dfs/blockcache");
@@ -307,6 +310,8 @@ public class BlockCacheServer extends DFSClient
         long lastCacheTime = cachedValue.getTimestamp();
         //not underconstruction
         if (lastCacheTime != UNDER_CONSTRUCTION) {
+          LOG.debug("Block" + " src: " + src + " pos: " + pos +
+              " exists");
           return cachedValue.getBlock();
         }
       }
@@ -318,6 +323,8 @@ public class BlockCacheServer extends DFSClient
       synchronized(cachedValue) {
         try {
           if (cachedValue.getTimestamp() == UNDER_CONSTRUCTION) {
+            LOG.debug("Block" + " src: " + src + " pos: " + pos +
+                " under construction");
             cachedValue.wait();
           }
         }

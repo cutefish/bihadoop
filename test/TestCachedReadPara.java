@@ -16,14 +16,16 @@ public class TestCachedReadPara {
   public static class Worker implements Runnable {
 
     private String inputFile;
+    private long offset;
     private int numBlocks;
     private long length;
     private boolean cacheflag;
     private String name;
 
-    public Worker(String inputFile, int numBlocks, 
+    public Worker(String inputFile, int offset, int numBlocks, 
         long length, boolean cacheflag, String name) {
       this.inputFile = inputFile;
+      this.offset = offset;
       this.numBlocks = numBlocks;
       this.length = length;
       this.cacheflag = cacheflag;
@@ -47,7 +49,6 @@ public class TestCachedReadPara {
           in = fs.openCachedReadOnly(filePath);
         }
 
-        int offset = (new Random()).nextInt(64000000);
         in.seek(offset);
 
         PrintWriter out = new PrintWriter(
@@ -60,7 +61,7 @@ public class TestCachedReadPara {
           long bytesRead = 0;
           long interval = length / 10;
           int n = 0;
-          byte[] buffer = new byte[128];
+          byte[] buffer = new byte[4096];
 
           long start = System.currentTimeMillis();
 
@@ -99,6 +100,8 @@ public class TestCachedReadPara {
       }
 
       String inputFile = "/data/" + args[0];
+      //int offset = (new Random()).nextInt(64000000);
+      int offset = 0;
       int numThreads = Integer.parseInt(args[1]);
       int numBlocks = Integer.parseInt(args[2]);
       long length = Long.parseLong(args[3]);
@@ -111,7 +114,8 @@ public class TestCachedReadPara {
 
       Thread[] threads = new Thread[numThreads];
       for (int i = 0; i < numThreads; ++i) {
-        Worker worker = new Worker( inputFile, numBlocks, length, 
+        offset = i * 32000000;
+        Worker worker = new Worker(inputFile, offset, numBlocks, length, 
             cacheflag, "TestCachedReadWorker" + i);
         threads[i] = new Thread(worker);
         threads[i].start();

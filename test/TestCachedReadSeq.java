@@ -48,7 +48,7 @@ public class TestCachedReadSeq {
       long interval = length / 10;
       int numDisp = 0;
       System.out.format("print interval: %d\n", interval);
-      byte[] buffer = new byte[128];
+      byte[] buffer = new byte[4096];
 
       long start = System.currentTimeMillis();
 
