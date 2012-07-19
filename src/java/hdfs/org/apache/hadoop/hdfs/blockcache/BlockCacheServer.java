@@ -22,7 +22,8 @@ import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 
 import org.apache.hadoop.hdfs.blockcache.BlockCacheProtocol.CachedBlock;
 
-public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
+public class BlockCacheServer extends DFSClient 
+  implements BlockCacheProtocol, Runnable {
 
   private static final Log LOG = LogFactory.getLog(BlockCacheServer.class);
 
@@ -50,6 +51,7 @@ public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
   private int gcCapacityThreadshold;
   private long gcTimeThreshold;
   private Thread gcRunner;
+  private Thread serverThread;
 
   static class TimedCachedBlock {
     CachedBlock block;
@@ -112,22 +114,42 @@ public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
     this.rpcListener = RPC.getServer(this, LOCAL_HOST, port, conf);
 
     //local dir
-    this.localCacheDir = conf.get(LOCAL_DIR, "/tmp/dfs/block_cache_dir");
-    new File(localCacheDir).mkdirs();
+    this.localCacheDir = conf.get(LOCAL_DIR, "/tmp/hadoop-xyu40/dfs/blockcache");
+    File path = new File(localCacheDir);
+    boolean success = true;
+    if (path.exists()) {
+      deleteDirFiles(path);
+    }
+    else {
+      LOG.info("Making block cacahe dir at " + this.localCacheDir);
+      success = path.mkdirs();
+    }
+    if (!success) {
+      throw new IOException("Cannot set local cache dir at " + 
+          this.localCacheDir);
+    }
 
     //gc
     this.gcCapacityThreadshold = (int) Math.ceil(conf.getFloat(GC_CAP_THR, 0.75f) * 
       cacheCapacity) + 1;
-    this.gcTimeThreshold = conf.getLong(GC_TIME_THR, 500);
+    this.gcTimeThreshold = conf.getLong(GC_TIME_THR, 5000);
     this.gcRunner = new Thread(new GCRunner());
     this.gcRunner.setDaemon(true);
 
-    LOG.debug("Block Cache Server instance" +
+    LOG.info("Block Cache Server instance" +
         ", port: " + port +
         ", cache block capacity: " + cacheCapacity +
         ", local cache dir: " + localCacheDir + 
         ", gc capacity threshold: " + gcCapacityThreadshold + 
         ", gc time threshold: " + gcTimeThreshold);
+  }
+
+  private void deleteDirFiles(File dir) {
+    String[] files = dir.list();
+    for (String file : files) {
+      LOG.info("delete file: " + file);
+      (new File(localCacheDir + "/" + file)).delete();
+    }
   }
 
   //Garbage collection on the cachedBlocks.
@@ -167,10 +189,16 @@ public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
             if (curr - lastUse > gcTimeThreshold) {
               toDelete.add(entry.getKey().getLocalPath());
               it.remove();
+
+              LOG.debug("Add to delete list:" + 
+                  "file: " + entry.getValue().getBlock().getLocalPath() + 
+                  "time: " + lastUse);
             }
           }
         }
+        LOG.debug("Deleting files");
         for (String file : toDelete) {
+          LOG.info("Deleting file " + file);
           boolean success = (new File(file)).delete();
           if (!success) {
             LOG.warn("GCRunner delete file failed," + " file: " +  file);
@@ -185,7 +213,7 @@ public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
   }
 
   //No matter what exception we get, keep running
-  public void start() {
+  public void run() {
     while(shouldRun) {
       try {
         this.rpcListener.start();
@@ -201,6 +229,12 @@ public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
         }
       }
     }
+  }
+
+  public static void startServer(BlockCacheServer s) {
+    s.serverThread = new Thread(s);
+    s.serverThread.setDaemon(true);
+    s.serverThread.start();
   }
 
   public void shutdown() {
@@ -239,6 +273,7 @@ public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
    * otherthan write a block into a local file.
    */
   public CachedBlock getCachedBlock(String src, long pos) throws IOException {
+    LOG.debug("Requiring Cache on" + " src: " + src + " pos: " + pos);
     //see if cache is full
     synchronized(cachedBlocks) {
       if (cachedBlocks.size() > cacheCapacity) {
@@ -329,11 +364,11 @@ public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
         cachedValue.getBlock().setLocalPath(path);
         cachedValue.setTimestamp(timestamp);
         LOG.info("Cache block for" + 
-            "src: " + src +
-            "start: " + blk.getStartOffset() +
-            "pos: " + pos + 
-            "length: " + blk.getBlockSize() + 
-            "at: " + path);
+            " src: " + src +
+            " start: " + blk.getStartOffset() +
+            " pos: " + pos + 
+            " length: " + blk.getBlockSize() + 
+            " at: " + path);
       }
       finally {
         //always wake up waiting threads.
@@ -349,7 +384,8 @@ public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
   }
 
   private String createBlockPath(CachedBlock block) {
-    return localCacheDir + "/" + block.getFileName() + "_" +
+    String fileName = block.getFileName().replace('/', '@');
+    return localCacheDir + "/" + fileName + "@" +
       block.getStartOffset();
   }
 
@@ -358,7 +394,7 @@ public class BlockCacheServer extends DFSClient implements BlockCacheProtocol {
     //file should exist
     String oldName = createBlockPath(block);
     File oldFile = new File(oldName);
-    String newName = oldName + "_" + timestamp;
+    String newName = oldName + "@" + timestamp;
     File newFile = new File(newName);
     boolean success = oldFile.renameTo(newFile);
     if (!success) {

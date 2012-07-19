@@ -159,6 +159,7 @@ public class DistributedFileSystem extends FileSystem {
   @Override
   public FSDataInputStream openCachedReadOnly(Path f, int bufferSize) 
   throws IOException {
+    LOG.debug("DFS openCachedReadOnly");
     statistics.incrementReadOps(1);
     return new DFSClient.DFSDataInputStream(
           dfs.openCachedReadOnly(getPathName(f), bufferSize, 

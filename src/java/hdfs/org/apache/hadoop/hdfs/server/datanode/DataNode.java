@@ -515,8 +515,8 @@ public class DataNode extends Configured
 
     //added by xyu40@gatech.edu
     //start a block cache server.
+    LOG.info("Starting Block Cache Server");
     blockCacheServer = new BlockCacheServer(conf);
-    blockCacheServer.start();
     //end xyu40@gatech.edu
 
   }
@@ -1473,7 +1473,12 @@ public class DataNode extends Configured
     // start dataXceiveServer
     dataXceiverServer.start();
     ipcServer.start();
-        
+
+    //added by xyu40@gatech.edu
+    //start BlockCacheServer
+    BlockCacheServer.startServer(blockCacheServer);
+    //end xyu40@gatech.edu
+
     while (shouldRun) {
       try {
         startDistributedUpgradeIfNeeded();

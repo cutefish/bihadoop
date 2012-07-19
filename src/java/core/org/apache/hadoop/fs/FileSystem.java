@@ -419,16 +419,6 @@ public abstract class FileSystem extends Configured implements Closeable {
   public abstract FSDataInputStream open(Path f, int bufferSize)
     throws IOException;
 
-  //Added by xyu40@gatech.edu
-  /**
-   * Opens an Cached FSDatainputStream at the indicated Path.
-   * Only cached for Hdfs, and thus is overrided by DistributedFileSystem.
-   */
-  public FSDataInputStream openCachedReadOnly(Path f, int bufferSize) 
-      throws IOException {
-    return open(f, bufferSize);
-  }
-    
   /**
    * Opens an FSDataInputStream at the indicated Path.
    * @param f the file to open
@@ -437,6 +427,25 @@ public abstract class FileSystem extends Configured implements Closeable {
     return open(f, getConf().getInt("io.file.buffer.size", 4096));
   }
 
+  //Added by xyu40@gatech.edu
+  /**
+   * Opens an Cached FSDatainputStream at the indicated Path.
+   * Only cached for Hdfs, and thus is overrided by DistributedFileSystem.
+   */
+  public FSDataInputStream openCachedReadOnly(Path f) 
+      throws IOException {
+    LOG.debug("FS openCachedReadOnly");
+    return openCachedReadOnly(f, 
+        getConf().getInt("io.file.buffer.size", 4096));
+  }
+
+  public FSDataInputStream openCachedReadOnly(Path f, int bufferSize) 
+      throws IOException {
+    LOG.debug("FS openCachedOnly");
+    return open(f, bufferSize);
+  }
+  //end xyu40@gatech.edu
+    
   /**
    * Opens an FSDataOutputStream at the indicated Path.
    * Files are overwritten by default.

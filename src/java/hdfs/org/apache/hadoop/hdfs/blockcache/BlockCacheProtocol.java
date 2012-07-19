@@ -1,7 +1,12 @@
 package org.apache.hadoop.hdfs.blockcache;
 
 import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
 
+import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.io.WritableFactory;
+import org.apache.hadoop.io.WritableFactories;
 import org.apache.hadoop.ipc.VersionedProtocol;
 
 //xyu40@gatech.edu
@@ -12,16 +17,23 @@ import org.apache.hadoop.ipc.VersionedProtocol;
 public interface BlockCacheProtocol extends VersionedProtocol {
 
   public static final long versionID = 01L;
-  public static final int DEFAULT_SERVER_PORT = 50200;
+  public static final int DEFAULT_SERVER_PORT = 60200;
 
   /**
    * This is a wrapper for the information passed between server and client.
    */
-  public static class CachedBlock {
+  public static class CachedBlock implements Writable {
     private String fileName;
     private long startOffset;
     private long blockLength;
     private String localPath;
+
+    public CachedBlock() {
+      this.fileName = null;
+      this.startOffset = 0;
+      this.blockLength = 0;
+      this.localPath = null;
+    }
 
     public CachedBlock(String fileName, long startOffset,
                        long blockLength, String localPath) {
@@ -63,6 +75,40 @@ public interface BlockCacheProtocol extends VersionedProtocol {
     public void setLocalPath(String path) {
       localPath = path;
     }
+
+    //////////////////////////////////////////////////
+    // Writable
+    //////////////////////////////////////////////////
+    static {                                      // register a ctor
+      WritableFactories.setFactory
+        (CachedBlock.class,
+         new WritableFactory() {
+           public Writable newInstance() { return new CachedBlock(); }
+         });
+    }
+
+    public void write(DataOutput out) throws IOException {
+      out.writeInt(this.fileName.length());
+      out.write(this.fileName.getBytes());
+      out.writeLong(this.startOffset);
+      out.writeLong(this.blockLength);
+      out.writeInt(this.localPath.length());
+      out.write(this.localPath.getBytes());
+    }
+
+    public void readFields(DataInput in) throws IOException {
+      int fileNameLength = in.readInt();
+      byte[] fileNameBuf = new byte[fileNameLength];
+      in.readFully(fileNameBuf);
+      this.fileName = new String(fileNameBuf);
+      this.startOffset = in.readLong();
+      this.blockLength = in.readLong();
+      int localPathLength = in.readInt();
+      byte[] localPathBuf = new byte[localPathLength];
+      in.readFully(localPathBuf);
+      this.localPath = new String(localPathBuf);
+    }
+
   }
 
   /**

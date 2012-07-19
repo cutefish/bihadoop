@@ -31,16 +31,22 @@ public class BlockCacheReader extends BlockReader {
 
   public BlockCacheReader(Configuration conf, 
                           String src, long pos) throws IOException {
-    super(new Path("/blk_of_" + src + "_at_" + pos), 1, null, false);
+    super(new Path("blk_of" + src + "_" + pos), 1);
     this.src = src;
     int port = conf.getInt(SERVER_PORT, 
         BlockCacheProtocol.DEFAULT_SERVER_PORT);
     InetSocketAddress serverAddr = new InetSocketAddress(LOCAL_HOST, port);
     cacheServer = (BlockCacheProtocol)RPC.getProxy(
         BlockCacheProtocol.class, BlockCacheProtocol.versionID,
-        serverAddr, conf);
+        serverAddr, conf, 10000);
+//    cacheServer = (BlockCacheProtocol)RPC.getProxy(
+//        BlockCacheProtocol.class, BlockCacheProtocol.versionID,
+//        serverAddr, conf);
     try {
+      long start = System.currentTimeMillis();
       block = cacheServer.getCachedBlock(src, pos);
+      long end = System.currentTimeMillis();
+      LOG.info("RPC getCachedBlock time: " + (end - start) + " ms");
     }
     catch (IOException e) {
       LOG.warn("BlockCacheServer connect failure at" + 

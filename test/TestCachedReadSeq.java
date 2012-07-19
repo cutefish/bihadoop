@@ -7,54 +7,67 @@ import org.apache.hadoop.fs.Path;
 
 public class TestCachedReadSeq {
   public static final int lineWidth = 16;
-  public static final String inputFile = "counterTxtFile";
-
-  //Return smallest number after m which can divide n
-  private static long nextDiv(int n, long m) {
-    long q = m / n;
-    if (m % n == 0) {
-      return m;
-    }
-    return (q + 1) * n;
-  }
 
   public static void main(String[] args) {
     try {
-      if (args != 2) {
-        System.out.println("java TestCachedReadSeq offset length);
+      if (args.length < 3) {
+        System.out.println("java TestCachedReadSeq file offset length cacheflag");
         System.exit(-1);
       }
 
-      long offset = Long.parseLong(args[0]);
-      long length = Long.parseLong(args[1]);
+      String inputFile = "/data/" + args[0];
+      long offset = Long.parseLong(args[1]);
+      long length = Long.parseLong(args[2]);
+      boolean cacheflag = false;
+      try {
+        cacheflag = Boolean.parseBoolean(args[3]);
+      }
+      catch (ArrayIndexOutOfBoundsException e) {
+      }
 
       Configuration conf = new Configuration();
-      conf.addResource("hdfs-site.xml");
       conf.addResource("hdfs-default.xml");
+      conf.addResource("hdfs-site.xml");
       System.out.format("fs.default.name:%s\n", conf.get("fs.default.name"));
       System.out.format("dfs.replication:%d\n", conf.getInt("dfs.replication", 3));
 
       FileSystem fs = FileSystem.get(conf);
       Path filePath = new Path(inputFile);
 
-      FSDataInputStream in = fs.open(filePath);
-      //FSDataInputStream in = fs.openCachedReadOnly(filePath);
+      FSDataInputStream in;
+      if (!cacheflag) {
+        in = fs.open(filePath);
+      }
+      else {
+        in = fs.openCachedReadOnly(filePath);
+      }
       in.seek(offset);
 
       int n = 0;
       long bytesRead = 0;
-      long interval = nextDiv(length / 10, lineWidth);
+      long interval = length / 10;
+      int numDisp = 0;
+      System.out.format("print interval: %d\n", interval);
       byte[] buffer = new byte[128];
+
+      long start = System.currentTimeMillis();
+
       while((bytesRead < length) && (n != -1)){
         n = in.read(buffer);
         if (n == -1) break;
-        if (bytesRead % interval == 0) {
-          String read = (new String(buffer)).substring(0, lineWidth - 1);
-          System.out.format("string read: %s, bytes read: %d\n",
-              read, bytesRead);
-        }
         bytesRead += n;
+        if (bytesRead > numDisp * interval) {
+          String read = (new String(buffer)).substring(0, lineWidth - 1);
+          System.out.format("string read: %s, offset: %d\n",
+              read, bytesRead + offset);
+          numDisp ++;
+        }
       }
+
+      long end = System.currentTimeMillis();
+
+      System.out.format("time: %d ms\n", (end - start));
+      System.out.format("bandwidth: %d Mbytes/s\n", length / (end - start) / 1000);
     }
     catch (Exception e) {
       System.out.println(e);

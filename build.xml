@@ -1,7 +1,7 @@
 <project name="MRCaching" default="compile">
 
     <!--Specify external class path-->
-    <property name="external.hadoop.home" location="/home/xyu40/Documents/research/hadoop-1.0.3" />
+    <property name="external.hadoop.home" location="/Hadoop/hadoop-1.0.3" />
     <path id="external.hadoop.classpath">
         <pathelement location="${external.hadoop.home}/build/classes"/>
         <pathelement location="${external.hadoop.home}/conf"/>
@@ -36,12 +36,19 @@
         <mkdir dir="${test.build.classes}"/>
     </target>
 
+    <condition property="compileopts" value="">
+        <not>
+            <isset property="compileopts"/>
+        </not>
+    </condition>
+
     <target name="compile-core-classes" depends="init">
         <javac
             srcdir="${core.src.dir}"
             includes="org/apache/hadoop/**/*.java"
             destdir="${build.classes}">
             <classpath refid="classpath"/>
+            <compilerarg line="${compileopts}"/>
         </javac>
     </target>
 
@@ -51,6 +58,7 @@
             includes="org/apache/hadoop/**/*.java"
             destdir="${build.classes}">
             <classpath refid="classpath"/>
+            <compilerarg line="${compileopts}"/>
         </javac>
     </target>
 
@@ -60,6 +68,7 @@
             includes="org/apache/hadoop/**/*.java"
             destdir="${build.classes}">
             <classpath refid="classpath"/>
+            <compilerarg line="${compileopts}"/>
         </javac>
     </target>
 
@@ -69,6 +78,7 @@
             includes="**/*.java"
             destdir="${test.build.classes}">
             <classpath refid="classpath"/>
+            <compilerarg line="${compileopts}"/>
         </javac>
     </target>
 
