@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+    <property>
+        <name>seq.local.query.filename</name>
+        <value>queryFile</value>
+    </property>
+    <property>
+        <name>seq.local.ref.filename</name>
+        <value>refFile</value>
+    </property>
+    <property>
+        <name>seq.local.query.size</name>
+        <value>2048</value>
+    </property>
+    <property>
+        <name>seq.local.ref.size</name>
+        <value>1048576</value>
+    </property>
+    <property>
+        <name>seq.local.ref.shift</name>
+        <value>2048</value>
+    </property>
+</configuration>

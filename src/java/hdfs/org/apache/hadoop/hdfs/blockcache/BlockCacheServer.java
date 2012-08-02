@@ -322,9 +322,7 @@ public class BlockCacheServer extends DFSClient
     if (!shouldConstuct) {
       synchronized(cachedValue) {
         try {
-          if (cachedValue.getTimestamp() == UNDER_CONSTRUCTION) {
-            LOG.debug("Block" + " src: " + src + " pos: " + pos +
-                " under construction");
+          while (cachedValue.getTimestamp() == UNDER_CONSTRUCTION) {
             cachedValue.wait();
           }
         }

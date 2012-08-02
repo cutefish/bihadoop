@@ -21,11 +21,17 @@
     <property name="test.build.dir" value="${build.dir}/test"/>
     <property name="test.build.classes" value="${test.build.dir}/classes"/>
 
+    <property name="bench.src.dir" value="${basedir}/bench"/>
+    <property name="bench.build.dir" value="${build.dir}/bench"/>
+    <property name="bench.build.classes" value="${bench.build.dir}/classes"/>
+
     <!--Project classpath-->
     <path id="classpath">
         <pathelement location="${build.classes}"/>
         <path refid="external.hadoop.classpath"/>
         <pathelement location="${test.build.classes}"/>
+        <pathelement location="${bench.build.classes}"/>
+        <pathelement location="${bench.conf}"/>
     </path>
 
     <!--Targets-->
@@ -34,6 +40,8 @@
         <mkdir dir="${build.classes}"/>
         <mkdir dir="${test.build.dir}"/>
         <mkdir dir="${test.build.classes}"/>
+        <mkdir dir="${bench.build.dir}"/>
+        <mkdir dir="${bench.build.classes}"/>
     </target>
 
     <condition property="compileopts" value="">
@@ -82,7 +90,17 @@
         </javac>
     </target>
 
-    <target name="compile" depends="compile-test">
+    <target name="compile-bench" depends="compile-mapred-classes, compile-hdfs-classes">
+        <javac
+            srcdir="${bench.src.dir}"
+            includes="**/*.java"
+            destdir="${bench.build.classes}">
+            <classpath refid="classpath"/>
+            <compilerarg line="${compileopts}"/>
+        </javac>
+    </target>
+
+    <target name="compile" depends="compile-test, compile-bench">
     </target>
 
     <target name="runtest">
