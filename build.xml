@@ -24,6 +24,7 @@
     <property name="bench.src.dir" value="${basedir}/bench"/>
     <property name="bench.build.dir" value="${build.dir}/bench"/>
     <property name="bench.build.classes" value="${bench.build.dir}/classes"/>
+    <property name="bench.conf" value="${basedir}/benchconf"/>
 
     <!--Project classpath-->
     <path id="classpath">
@@ -42,6 +43,7 @@
         <mkdir dir="${test.build.classes}"/>
         <mkdir dir="${bench.build.dir}"/>
         <mkdir dir="${bench.build.classes}"/>
+        <mkdir dir="${bench.conf}"/>
     </target>
 
     <condition property="compileopts" value="">

@@ -20,7 +20,7 @@ import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableFactory;
 import org.apache.hadoop.io.WritableFactories;
 
-class MicroBench {
+public class MicroBench {
   public static final Log LOG = LogFactory.getLog(MicroBench.class);
 
   /* PerfResult */
@@ -119,7 +119,7 @@ class MicroBench {
   private int compute(byte[] query, byte[] ref, 
       int querySize, int refSize, byte[] out, int shift) {
     int ind = 0;
-    for (int i = 0; i < refSize; i += shift) {
+    for (int i = 0; i < refSize - querySize; i += shift) {
       out[ind] = 0;
       for (int j = 0; j < querySize; j++) {
         out[ind] += query[j] * ref[i + j];
@@ -170,6 +170,12 @@ class MicroBench {
     int refSize = conf.getInt("seq.local.ref.size", 1048576);
     int shift = conf.getInt("seq.local.ref.shift", 2048);
 
+    LOG.info("queryFile: " + queryFile);
+    LOG.info("refFile: " + refFile);
+    LOG.info("querySize: " + querySize);
+    LOG.info("refSize: " + refSize);
+    LOG.info("shift: " + shift);
+
     genData(queryFile, querySize);
     genData(refFile, refSize);
 
@@ -182,6 +188,7 @@ class MicroBench {
   }
 
   public static void main(String[] args) {
+    System.out.println("Microbench");
     if (args.length < 1) {
       System.out.println("usage: java MicroBench benchname");
       System.exit(-1);
@@ -192,13 +199,16 @@ class MicroBench {
 
     MicroBench mb = new MicroBench();
 
-    if (args[0] == "perfSeqLocal") {
+    if (args[0].equals("perfSeqLocal")) {
       try {
         mb.perfSeqLocal(conf);
       }
       catch (Exception e) {
         System.out.println(e);
       }
+    }
+    else {
+      System.out.println("Invalid function: " + args[0]);
     }
   }
 
