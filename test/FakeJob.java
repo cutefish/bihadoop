@@ -12,29 +12,25 @@ import org.apache.hadoop.mapred.mp2.IndexedSplitFilter;
 
 public class FakeJob {
 
-  private Configuration conf;
   private List<IndexedSplit[]> taskList;
-  private IndexedSplit[] split0;
-  private IndexedSplit[] split1;
-  private IndexedSplitFilter filter;
+  final private IndexedSplit[] split0;
+  final private IndexedSplit[] split1;
+  private Filter filter;
 
-  public FakeJob(Configuration conf) {
-    this.conf = conf;
+  static public interface Filter {
+    public boolean accept(IndexedSplit s0, IndexedSplit s1) {
+    }
   }
 
-  public void setSplit0(IndexedSplit[] split0) {
-    this.split0 = split0;
+  public void setFilter(Filter f) {
+    filter = f;
   }
 
-  public void setSplit0(ArrayList split0) {
+  public void setSplit0(List split0) {
     this.split0 = split0.toArray(new IndexedSplit[split0.size()]);
   }
 
-  public void setSplit1(IndexedSplit[] split1) {
-    this.split1 = split1;
-  }
-
-  public void setSplit1(ArrayList split1) {
+  public void setSplit1(List split1) {
     this.split1 = split1.toArray(new IndexedSplit[split0.size()]);
   }
 
@@ -47,7 +43,6 @@ public class FakeJob {
   }
 
   public void init() {
-    filter = conf.get("job.filter.class");
     taskList = new List<IndexedSplit[]>();
     for (IndexedSplit s0 : split0) {
       for (IndexedSplit s1: split1) {

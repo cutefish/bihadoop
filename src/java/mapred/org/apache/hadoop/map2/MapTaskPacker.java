@@ -181,15 +181,16 @@ public class MapTaskPacker {
   }
 
   //for debug
-  public void writeGroupList(DataOutput out) throws IOException {
-    out.writeChars("groupNo " + groupList.size() + '\n');
+  public String groupsToString() {
+    String retString = "";
+    retString += "groupNo " + groupList.size() + '\n';
     for (int i = 0; i < groupList.size(); ++i) {
-      out.writeChars("group " + i + '\n');
-      HashMap<IndexedList> group = groupList.get(i);
+      retString += "group " + i + '\n';
+      HashMap<IndexedSplit> group = groupList.get(i);
       for (IndexedList split0 : group) {
-        out.writeChars("+split0: " + split0 + '\n');
+        retString += "+split0: " + split0 + '\n';
         for (IndexedList split1 : joinTable.get(split0)) {
-          out.writeChars("++split1: " + split1 + '\n');
+          retString += "++split1: " + split1 + '\n';
         }
       }
     }
