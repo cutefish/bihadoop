@@ -38,6 +38,14 @@ public class FakeJob {
     this.split1 = split1.toArray(new IndexedSplit[split0.size()]);
   }
 
+  public IndexedSplit[] getSplit0() {
+    return split0;
+  }
+
+  public IndexedSplit[] getSplit1() {
+    return split1;
+  }
+
   public void init() {
     filter = conf.get("job.filter.class");
     taskList = new List<IndexedSplit[]>();

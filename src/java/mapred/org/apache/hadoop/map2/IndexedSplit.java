@@ -9,12 +9,20 @@ import org.apache.hadoop.io.Text;
 public class IndexedSplit implements Comparable {
 
   private String index;
-  IndexedSplit(String index) {
+  private long size;
+
+
+  IndexedSplit(String index, long size) {
     this.index = index;
+    this.size = size;
   }
 
   public String getIndex() {
     return index;
+  }
+
+  public long size() {
+    return size;
   }
 
   @Override

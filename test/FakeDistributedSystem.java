@@ -68,7 +68,7 @@ public class FakeDistributedSystem {
     }
   }
 
-  public void createSplit(IndexedSplit s) {
+  private void createSplit(IndexedSplit s) {
     if (staticLocations.getKey(s) == null) return;
     Random r = new Random();
     for (int i = 0; i < numOfReplicas; ++i) {
@@ -77,12 +77,22 @@ public class FakeDistributedSystem {
     }
   }
 
-  public void cacheAt(IndexedSplit s, int nodeId) {
+  private void cacheAt(IndexedSplit s, int nodeId) {
     nodes[nodeId].addDynamicSplit(s);
   }
 
   public FakeNode getNode(int nodeId) {
     return nodes[nodeId];
+  }
+
+  public void submitJob(FakeJob job) {
+    job.init();
+    for (IndexedSplit split : job.getSplit0()) {
+      createSplit(split);
+    }
+    for (IndexedSplit split : job.getSplit1()) {
+      createSplit(split);
+    }
   }
 
 }

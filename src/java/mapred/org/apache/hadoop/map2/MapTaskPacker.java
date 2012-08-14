@@ -31,6 +31,63 @@ public class MapTaskPacker {
   private Map<IndexedSplit, TreeSet<IndexedSplit>> joinTable;
 
   /**
+   * Pack of tasks(IndexedSplit pairs)
+   */
+  public static class Pack {
+    private Map<IndexedSplit, TreeSet<IndexedSplit>> packMap;
+    private IndexedSplit current = null;
+
+    public Pack() {
+      this.packMap = new HashMap<IndexedSplit, TreeSet<IndexedSplit>>();
+    }
+
+    public TreeSet<IndexedSplit> get(IndexedSplit split) {
+      packMap.get(s);
+    }
+
+    public void put(IndexedSplit split, TreeSet<IndexedSplit> set) {
+      packMap.put(split, set);
+    }
+
+    public void remove(IndexedSplit split) {
+      packMap.remove(split);
+    }
+
+    public boolean isEmpty() {
+      return packMap.isEmpty();
+    }
+
+    public Set<IndexedSplit> keySet() {
+      return packMap.keySet();
+    }
+
+    public IndexedSplit[] getNext() {
+      if ((packMap == null) || (packMap.isEmpty())) {
+        return null;
+      }
+      if (current == null) {
+        current = packMap.keySet().iterator().next();
+      }
+      TreeSet<IndexedSplit> set = packMap.get(current);
+      while (set == null) {
+        packMap.remove(current);
+        current = packMap.keySet().iterator().next();
+        set = packMap.get(current);
+      }
+      IndexedSplit joinSplit = set.first();
+      set.remove(joinSplit);
+      IndexedSplit[] nextSplits;
+      nextSplits[0] = current;
+      nextSplits[1] = joinSplit;
+      return nextSplits;
+    }
+
+    public String toString() {
+      return packMap.toString();
+    }
+  }
+
+  /**
    * Initialize MapTaskPacker from a list of IndexedSplit[2].
    *
    * Splits are not ordered, that is, we do not distinguish 
@@ -152,10 +209,9 @@ public class MapTaskPacker {
    * hurt. The assumptions are that this function should be called not very
    * frequently and the cache size are not so large.
    */
-  private synchronized Map<IndexedSplit, TreeSet<IndexedSplit>>
-      obtainLastLevelPack(Set<IndexedSplit> staticCache, Set<IndexedSplit>
-                          dynamicCache, long cacheSize) {
-
+  public synchronized Pack obtainLastLevelPack(
+      Set<IndexedSplit> staticCache, Set<IndexedSplit> dynamicCache, 
+      long cacheSize) {
     //no pack if no group.
     if ((groupList == null) || (groupList.isEmpty())) return null;
 
@@ -171,13 +227,12 @@ public class MapTaskPacker {
     int numPackedTasks = 0;
     long sizeLeft;
     boolean finished = false;
-    Map<IndexedSplit, TreeSet<IndexedSplit>> pack = 
-        new HashMap<IndexedSplit, TreeSet<IndexedSplit>>();
+    Pack newPack = new Pack();
     Set<IndexedSplit> newDynamicCache = new HashSet<IndexedSplit>();
     // use half of the cache for the join set.
     sizeLeft = cacheSize / 2;
     TreeSet<IndexedSplit> tmp = joinTable.get(chosenSplit);
-    TreeSet<IndexedSplit> chosenSet = new TreeSet<IndexedSplit>;
+    TreeSet<IndexedSplit> chosenSet = new TreeSet<IndexedSplit>();
     for(IndexedSplit split : tmp) {
       newDynamicCache.add(split);
       chosenSet.add(split);
@@ -198,7 +253,7 @@ public class MapTaskPacker {
       tmp = joinTable.get(local);
       for (IndexedSplit split : chosenSet) {
         if (tmp.contains(split)) {
-          addPairToPack(packed, local, split);
+          addPairToPack(newPack, local, split);
           removePair(local, split);
           numPackedTasks ++;
           if (numPackedTasks >= maxPackSize) {
@@ -207,7 +262,7 @@ public class MapTaskPacker {
           }
         }
       }
-      if (finished == true) return pack;
+      if (finished == true) return newPack;
     }
 
     // try all non-locals in the same group
@@ -216,7 +271,7 @@ public class MapTaskPacker {
       if ((!staticCache.contains(any)) &&
           (!dynamicCache.contains(any))) {
         if (sizeLeft - local.size() < 0) {
-          return pack;
+          return newPack;
         }
         else {
           newDynamicCache.add(any);
@@ -228,7 +283,7 @@ public class MapTaskPacker {
       tmp = joinTable.get(any);
       for (IndexedSplit split : chosenSet) {
         if (tmp.contains(split)) {
-          addPairToPack(packed, any, split);
+          addPairToPack(newPack, any, split);
           removePair(any, split);
           numPackedTasks ++;
           if (numPackedTasks >= maxPackSize) {
@@ -237,17 +292,11 @@ public class MapTaskPacker {
           }
         }
       }
-      if (finished == true) return pack;
+      if (finished == true) return newPack;
     }
 
-    return pack;
+    return newPack;
   }
-
-  /**
-   * Obtain high level pack
-   *
-   * For memory level cache, obtained from a pack.
-   */
 
   private int chooseBestGroup(Set<IndexedSplit> cache) {
     Map<Integer, Integer> groupForlocals = new HashMap<Integer, Integer>();
@@ -294,9 +343,59 @@ public class MapTaskPacker {
     return chosenSplit;
   }
 
-  private static void addPairToPack(
-      Map<IndexedSplit, TreeSet<IndexedSplit>> pack,
-      IndexedSplit split0, IndexedSplit split1) {
+  /**
+   * Obtain subpack
+   *
+   * For memory level cache, obtained from a pack.
+   */
+  public Pack obtainSubpack(Pack pack, long cacheSize) {
+    if ((pack == null) || (pack.isEmpty())) return null;
+
+    Pack subPack = new Pack();
+
+    //choose largest set
+    int largest = 0;
+    TreeSet<IndexedSplit> largestSet;
+    for(IndexedSplit split : pack.keySet()) {
+      TreeSet<IndexedSplit> set = pack.get(split);
+      if (set.size() > largestSet) {
+        largest = set.size();
+        largestSet = set;
+      }
+    }
+
+    //choose a sub set to fill half cache
+    long sizeLeft = cacheSize / 2;
+    TreeSet<IndexedSplit> chosenSet = new TreeSet<IndexedSplit>();
+    for(IndexedSplit split : largestSet) {
+      chosenSet.add(split);
+      sizeLeft -= split.size();
+      if (sizeLeft < 0) break;
+    }
+
+    //choose corresponding tasks
+    boolean finished = false;
+    sizeLeft += cacheSize / 2;
+    for(IndexedSplit split : pack.keySet()) {
+      TreeSet<IndexedSplit> set = pack.get(split);
+      for (IndexedSplit joinSplit : set) {
+        if (chosenSet.contains(joinSplit)) {
+          if (sizeLeft - split.size() < 0) {
+            finished = true;
+            break;
+          }
+          addPairToPack(subPack, split, joinSplit);
+          removePairFromPack(pack, split, joinSplit);
+          sizeLeft -= split.size();
+        }
+      }
+      if (finished) break;
+    }
+    return subPack;
+  }
+
+  private static void addPairToPack(Pack pack, 
+                                    IndexedSplit split0, IndexedSplit split1) {
     TreeSet<IndexedSplit> set = pack.get(split0);
     if (set == null) {
       set = new TreeSet<IndexedSplit>();
@@ -305,6 +404,15 @@ public class MapTaskPacker {
     else {
       set.add(split1);
     }
+  }
+
+  private static void removePairFromPack(
+      Pack pack, IndexedSplit split0, IndexedSplit split1) {
+    if (pack == null) return;
+    TreeSet<IndexedSplit> set = pack.get(split0);
+    if (set == null) return;
+    set.remove(split1);
+    if (set.isEmpty()) pack.remove(split0);
   }
 
   /**
@@ -334,34 +442,6 @@ public class MapTaskPacker {
       groupList.get(groupCache.get(split0)).remove(split0);
       groupCache.remove(split0);
     }
-  }
-
-  /**
-   * Convert Map to List and correct the order of the two splits.
-   */
-  public List<IndexedSplit[]> normalize(Map<IndexedList, TreeSet<IndexedSplit> map) {
-    List<IndexedSplit[]> list = ArrayList<IndexedSplit[]>();
-    for (IndexedList key : map.keySet()) {
-      for (IndexedList value : map.getKey(key)) {
-        IndexedSplit[] splitPair = new IndexedSplit[2];
-        if (splitGroupOrder == 0) {
-          splitPair[0] = key;
-          splitPair[1] = value;
-        }
-        else {
-          splitPair[1] = key;
-          splitPair[0] = value;
-        }
-        list.add(splitPair);
-      }
-    }
-  }
-
-  /**
-   * Pack to String.
-   * For debug use.
-   */
-  public String packToString(List<IndexedSplit[]> pack) {
   }
 
 }
