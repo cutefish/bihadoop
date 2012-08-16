@@ -1,9 +1,10 @@
+import java.util.List;
 import java.util.ArrayList;
 
 import org.apache.hadoop.conf.Configuration;
 
-import org.apache.hadoop.mapred.mp2.IndexedSplit;
-import org.apache.hadoop.mapred.mp2.IndexedSplitFilter;
+import org.apache.hadoop.mapred.map2.IndexedSplit;
+import org.apache.hadoop.mapred.map2.Map2Filter;
 
 /* FakeJobs.java
  *
@@ -13,43 +14,29 @@ import org.apache.hadoop.mapred.mp2.IndexedSplitFilter;
 public class FakeJob {
 
   private List<IndexedSplit[]> taskList;
-  final private IndexedSplit[] split0;
-  final private IndexedSplit[] split1;
-  private Filter filter;
+  private Map2Filter filter;
+  private IndexedSplit[] splits;
 
-  static public interface Filter {
-    public boolean accept(IndexedSplit s0, IndexedSplit s1) {
-    }
+  public void setFilter(Map2Filter filter) {
+    this.filter = filter;
   }
 
-  public void setFilter(Filter f) {
-    filter = f;
+  public void setSplits(List<IndexedSplit> splits) {
+    this.splits = splits.toArray(new IndexedSplit[splits.size()]);
   }
 
-  public void setSplit0(List split0) {
-    this.split0 = split0.toArray(new IndexedSplit[split0.size()]);
-  }
-
-  public void setSplit1(List split1) {
-    this.split1 = split1.toArray(new IndexedSplit[split0.size()]);
-  }
-
-  public IndexedSplit[] getSplit0() {
-    return split0;
-  }
-
-  public IndexedSplit[] getSplit1() {
-    return split1;
+  public IndexedSplit[] getSplits() {
+    return splits;
   }
 
   public void init() {
-    taskList = new List<IndexedSplit[]>();
-    for (IndexedSplit s0 : split0) {
-      for (IndexedSplit s1: split1) {
-        if (filter.accept(s0, s1)) {
+    taskList = new ArrayList<IndexedSplit[]>();
+    for (int i = 0; i < splits.length; ++i) {
+      for (int j = i; j < splits.length; ++j) {
+        if (filter.accept(splits[i], splits[j])) {
           IndexedSplit[] splitPair = new IndexedSplit[2];
-          splitPair[0] = s0;
-          splitPair[1] = s1;
+          splitPair[0] = splits[i];
+          splitPair[1] = splits[j];
           taskList.add(splitPair);
         }
       }
@@ -58,5 +45,9 @@ public class FakeJob {
 
   public List<IndexedSplit[]> getTaskList() {
     return taskList;
+  }
+
+  public int getNumTasks() {
+    return taskList.size();
   }
 }

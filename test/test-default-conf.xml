@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+    <property>
+        <name>node.enabled.cache</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>node.disk.capacity</name>
+        <value>1024</value>
+    </property>
+    <property>
+        <name>node.memory.capacity</name>
+        <value>256</value>
+    </property>
+    <property>
+        <name>split.block.size</name>
+        <value>64</value>
+    </property>
+    <property>
+        <name>num.of.distributed.node</name>
+        <value>16</value>
+    </property>
+    <property>
+        <name>num.of.replicas</name>
+        <value>3</value>
+    </property>
+    <property>
+        <name>allpair.num.split0</name>
+        <value>32</value>
+    </property>
+    <property>
+        <name>allpair.num.split1</name>
+        <value>32</value>
+    </property>
+    <property>
+        <name>job.class.name</name>
+        <value>TestScheduler$AllPairJob</value>
+    </property>
+</configuration>

@@ -1,5 +1,9 @@
 package org.apache.hadoop.mapred.map2;
 
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
+
 import org.apache.hadoop.io.Text;
 
 /* IndexedSplit
@@ -12,7 +16,7 @@ public class IndexedSplit implements Comparable {
   private long size;
 
 
-  IndexedSplit(String index, long size) {
+  public IndexedSplit(String index, long size) {
     this.index = index;
     this.size = size;
   }
@@ -29,7 +33,7 @@ public class IndexedSplit implements Comparable {
   public boolean equals(Object to) {
     if (this == to) return true;
     if (!(to instanceof IndexedSplit)) return false;
-    return (index.equals(((indexedSplit)to).getIndex()));
+    return (index.equals(((IndexedSplit)to).getIndex()));
   }
 
   @Override
@@ -39,8 +43,8 @@ public class IndexedSplit implements Comparable {
 
   @Override
   public int compareTo(Object to) {
-    if (!(to instanceof IndexedSplit)) throws new ClassCastException;
-    return (index.compareTo(((indexedSplit)to).getIndex()));
+    if (!(to instanceof IndexedSplit)) throw new ClassCastException();
+    return (index.compareTo(((IndexedSplit)to).getIndex()));
   }
 
   public void write(DataOutput out) throws IOException {

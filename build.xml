@@ -4,7 +4,7 @@
     <property name="external.hadoop.home" location="/Hadoop/hadoop-1.0.3" />
     <path id="external.hadoop.classpath">
         <pathelement location="${external.hadoop.home}/build/classes"/>
-        <pathelement location="${external.hadoop.home}/conf"/>
+        <!--<pathelement location="${external.hadoop.home}/conf"/>-->
         <fileset dir="${external.hadoop.home}/lib" includes="**/*.jar"/>
     </path>
 
@@ -24,7 +24,8 @@
     <property name="bench.src.dir" value="${basedir}/bench"/>
     <property name="bench.build.dir" value="${build.dir}/bench"/>
     <property name="bench.build.classes" value="${bench.build.dir}/classes"/>
-    <property name="bench.conf" value="${basedir}/benchconf"/>
+
+    <property name="conf" value="${basedir}/conf"/>
 
     <!--Project classpath-->
     <path id="classpath">
@@ -32,7 +33,7 @@
         <path refid="external.hadoop.classpath"/>
         <pathelement location="${test.build.classes}"/>
         <pathelement location="${bench.build.classes}"/>
-        <pathelement location="${bench.conf}"/>
+        <pathelement location="${conf}"/>
     </path>
 
     <!--Targets-->
@@ -43,7 +44,7 @@
         <mkdir dir="${test.build.classes}"/>
         <mkdir dir="${bench.build.dir}"/>
         <mkdir dir="${bench.build.classes}"/>
-        <mkdir dir="${bench.conf}"/>
+        <mkdir dir="${conf}"/>
     </target>
 
     <condition property="compileopts" value="">
@@ -90,6 +91,9 @@
             <classpath refid="classpath"/>
             <compilerarg line="${compileopts}"/>
         </javac>
+        <copy todir="${test.build.classes}">
+            <fileset dir="${test.src.dir}" includes="test-default-conf.xml"/>
+        </copy>
     </target>
 
     <target name="compile-bench" depends="compile-mapred-classes, compile-hdfs-classes">
@@ -100,6 +104,9 @@
             <classpath refid="classpath"/>
             <compilerarg line="${compileopts}"/>
         </javac>
+        <copy todir="${bench.build.classes}">
+            <fileset dir="${bench.src.dir}" includes="*-conf.xml"/>
+        </copy>
     </target>
 
     <target name="compile" depends="compile-test, compile-bench">
