@@ -53,6 +53,30 @@ public class MapTaskPacker {
       packMap.remove(split);
     }
 
+    //possibly adding duplicates: a->b and b->a
+    public void addPair(IndexedSplit split0, IndexedSplit split1) {
+      TreeSet<IndexedSplit> set = packMap.get(split0);
+      if (set == null) {
+        set = new TreeSet<IndexedSplit>();
+        packMap.put(split0, set);
+      }
+      set.add(split1);
+    }
+
+    //responsible to also remove duplicates
+    public void removePair(IndexedSplit split0, IndexedSplit split1) {
+      TreeSet<IndexedSplit> set = packMap.get(split0);
+      if (set != null) {
+        set.remove(split1);
+        if (set.isEmpty()) packMap.remove(split0);
+      }
+      set = packMap.get(split1);
+      if (set != null) {
+        set.remove(split0);
+        if (set.isEmpty()) packMap.remove(split1);
+      }
+    }
+
     public boolean isEmpty() {
       return packMap.isEmpty();
     }
@@ -81,10 +105,10 @@ public class MapTaskPacker {
         set = packMap.get(current);
       }
       IndexedSplit joinSplit = set.first();
-      set.remove(joinSplit);
       IndexedSplit[] nextSplits = new IndexedSplit[2];
       nextSplits[0] = current;
       nextSplits[1] = joinSplit;
+      removePair(current, joinSplit);
       return nextSplits;
     }
 
@@ -121,11 +145,7 @@ public class MapTaskPacker {
     initGroups();
     maxPackSize = totalNumMaps / clusterSize + 
         ((totalNumMaps % clusterSize == 0) ? 0 : 1);
-//    LOG.debug("JoinTable:\n" + joinTableToString());
-//    LOG.debug("Groups:\n" + groupsToString());
-    LOG.info("JoinTable size: " + joinTable.size());
     LOG.info("Number of Groups size: " + groups.size());
-    LOG.info("Group cache size: " + groupCache.size());
     LOG.info("Finished initializing for job");
   }
 
@@ -236,7 +256,7 @@ public class MapTaskPacker {
   public String groupsToString() {
     StringBuilder ret = new StringBuilder();
     ret.append("groupNo " + groups.size() + '\n');
-    for (int i = 0; i < groups.size(); ++i) {
+    for (int i : groups.keySet()) {
       ret.append("group " + i + '\n');
       HashSet<IndexedSplit> group = groups.get(i);
       for (IndexedSplit split0 : group) {
@@ -249,6 +269,11 @@ public class MapTaskPacker {
       }
     }
     return ret.toString();
+  }
+
+  //for debug
+  public int numGroups() {
+    return groups.size();
   }
 
   /**
@@ -274,6 +299,8 @@ public class MapTaskPacker {
 
     //pack from the group with most local splits
     //select tasks from the largest join set.
+    LOG.info("Choosing suitable join set");
+
     HashSet<IndexedSplit> cache = new HashSet<IndexedSplit>();
     cache.addAll(staticCache);
     cache.addAll(dynamicCache);
@@ -303,6 +330,8 @@ public class MapTaskPacker {
     //start packing
     sizeLeft += cacheSize / 2;
     List<IndexedSplit[]> deleteList = new ArrayList<IndexedSplit[]>();
+
+    LOG.info("Start packing");
     // obtain local tasks first
     for (IndexedSplit local : cache) {
       //only splits in the old dynamic cache will increase the size, 
@@ -318,7 +347,7 @@ public class MapTaskPacker {
       int count = 0;
       for (IndexedSplit split : chosenSet) {
         if (tmp.contains(split)) {
-          addPairToPack(newPack, local, split);
+          newPack.addPair(local, split);
           IndexedSplit[] toDelete = new IndexedSplit[2];
           toDelete[0] = local;
           toDelete[1] = split;
@@ -346,7 +375,6 @@ public class MapTaskPacker {
 
     if (finished == true) {
       removePairs(deleteList);
-      LOG.info("Pack size: " + newPack.size());
       return newPack;
     }
 
@@ -372,7 +400,7 @@ public class MapTaskPacker {
       int count = 0;
       for (IndexedSplit split : chosenSet) {
         if (tmp.contains(split)) {
-          addPairToPack(newPack, any, split);
+          newPack.addPair(any, split);
           IndexedSplit[] toDelete = new IndexedSplit[2];
           toDelete[0] = any;
           toDelete[1] = split;
@@ -401,7 +429,8 @@ public class MapTaskPacker {
     }
 
     removePairs(deleteList);
-    LOG.info("Pack size: " + newPack.size());
+    LOG.debug("Finished all local and non-local sets");
+
     return newPack;
   }
 
@@ -434,7 +463,9 @@ public class MapTaskPacker {
     //local is in none of the group
     //just pick a group
     if (bestGroupIndex == -1) {
-      bestGroupIndex = groups.size() - 1;
+      if ((groups != null) && (!groups.isEmpty())) {
+        bestGroupIndex = groups.keySet().iterator().next();
+      }
     }
 
     return bestGroupIndex;
@@ -446,11 +477,16 @@ public class MapTaskPacker {
     int largest = 0;
     IndexedSplit chosenSplit = null;
     HashSet<IndexedSplit> group = groups.get(groupIndex);
+    if (group == null) {
+      LOG.info("no group: " + groupIndex);
+      LOG.info(groupsToString());
+    }
     for (IndexedSplit split : cache) {
-      if ((group.contains(split)) && 
-          (joinTable.get(split).size() > largest)) {
-        largest = joinTable.get(split).size();
-        chosenSplit = split;
+      if (group.contains(split)) {
+        if (joinTable.get(split).size() > largest) {
+          largest = joinTable.get(split).size();
+          chosenSplit = split;
+        }
       }
     }
 
@@ -523,7 +559,7 @@ public class MapTaskPacker {
 //          LOG.debug("sizeLeft: " + sizeLeft);
 //          LOG.debug("split size: " + split.size());
 
-          addPairToPack(subPack, split, joinSplit);
+          subPack.addPair(split, joinSplit);
           IndexedSplit[] toDelete = new IndexedSplit[2];
           toDelete[0] = split;
           toDelete[1] = joinSplit;
@@ -534,28 +570,9 @@ public class MapTaskPacker {
     }
 
     for (IndexedSplit[] splitPair : deleteList) {
-      removePairFromPack(pack, splitPair[0], splitPair[1]);
+      pack.removePair(splitPair[0], splitPair[1]);
     }
     return subPack;
-  }
-
-  private static void addPairToPack(Pack pack, 
-                                    IndexedSplit split0, IndexedSplit split1) {
-    TreeSet<IndexedSplit> set = pack.get(split0);
-    if (set == null) {
-      set = new TreeSet<IndexedSplit>();
-      pack.put(split0, set);
-    }
-    set.add(split1);
-  }
-
-  private static void removePairFromPack(
-      Pack pack, IndexedSplit split0, IndexedSplit split1) {
-    if (pack == null) return;
-    TreeSet<IndexedSplit> set = pack.get(split0);
-    if (set == null) return;
-    set.remove(split1);
-    if (set.isEmpty()) pack.remove(split0);
   }
 
   /**
@@ -570,20 +587,19 @@ public class MapTaskPacker {
    */
   private void removePairs(List<IndexedSplit[]> splitList) {
     for(IndexedSplit[] pair : splitList) {
-      LOG.info("remove " + pair[0].getIndex() + " , " + pair[1].getIndex());
       IndexedSplit split0 = pair[0];
       IndexedSplit split1 = pair[1];
       TreeSet<IndexedSplit> tmpSet;
 
       tmpSet = joinTable.get(split0);
-      //we can simply return from here if tmpSet is null
+      //we can simply continue from here if tmpSet is null
       //because splits appear in pair.
-      if (tmpSet == null) return;
+      if (tmpSet == null) continue;
       tmpSet.remove(split1);
       clearSplitIfEmpty(split0);
 
       tmpSet = joinTable.get(split1);
-      if (tmpSet == null) return;
+      if (tmpSet == null) continue;
       tmpSet.remove(split0);
       clearSplitIfEmpty(split1);
     }

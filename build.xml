@@ -64,13 +64,13 @@
     </target>
 
     <target name="compile-hdfs-classes" depends="compile-core-classes">
-        <javac
+        <!--<javac
             srcdir="${hdfs.src.dir}"
             includes="org/apache/hadoop/**/*.java"
             destdir="${build.classes}">
             <classpath refid="classpath"/>
             <compilerarg line="${compileopts}"/>
-        </javac>
+        </javac>-->
     </target>
 
     <target name="compile-mapred-classes" depends="compile-hdfs-classes">

@@ -1,4 +1,4 @@
-package org.apache.hadoop.hdfs.blockcache;
+package org.apache.hadoop.blockcache;
 
 
 import java.io.*;
@@ -20,7 +20,7 @@ import org.apache.hadoop.ipc.RPC.Server;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 
-import org.apache.hadoop.hdfs.blockcache.BlockCacheProtocol.CachedBlock;
+import org.apache.hadoop.blockcache.BlockCacheProtocol.CachedBlock;
 
 public class BlockCacheServer extends DFSClient 
   implements BlockCacheProtocol, Runnable {
@@ -293,7 +293,7 @@ public class BlockCacheServer extends DFSClient
     //get the block information
     LocatedBlock blk = remoteIn.getBlockAtPublic(pos);
     CachedBlock block = new CachedBlock(src, blk.getStartOffset(),
-        blk.getBlockSize(), "NOT_ASSIGNED_YET");
+        blk.getBlockSize(), "NOT_ASSIGNED_YET", 0);
     //try to get block from cached
     TimedCachedBlock cachedValue;
     boolean shouldConstuct = false;

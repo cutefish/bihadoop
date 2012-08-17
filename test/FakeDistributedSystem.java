@@ -3,6 +3,7 @@ import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
@@ -24,10 +25,11 @@ public class FakeDistributedSystem {
   private static final Log LOG = LogFactory.getLog(FakeDistributedSystem.class);
 
   private Configuration conf;
-  private boolean enabledCache;
+  private int schedChoice;
   private int numOfNodes;
   private int numOfReplicas;
   private FakeNode[] nodes;
+  private Map<IndexedSplit, LinkedList<Integer>> locationCache;
 
   public FakeDistributedSystem(Configuration conf) {
     this.conf = conf;
@@ -117,7 +119,7 @@ public class FakeDistributedSystem {
   }
 
   public void init() {
-    enabledCache = conf.getBoolean("node.enabled.cache", true);
+    schedChoice = conf.getInt("node.schedule.choice", 0);
     numOfNodes = conf.getInt("num.of.distributed.node", 100);
     numOfReplicas = conf.getInt("num.of.replicas", 3);
     nodes = new FakeNode[numOfNodes];
@@ -125,14 +127,19 @@ public class FakeDistributedSystem {
       FakeNode n = this.new FakeNode(i);
       nodes[i] = n;
     }
+    locationCache = new HashMap<IndexedSplit, LinkedList<Integer>>();
   }
 
   private void createSplit(IndexedSplit s) {
+    if (locationCache.get(s) != null) return;
     Random r = new Random();
+    LinkedList<Integer> locationList = new LinkedList<Integer>();
     for (int i = 0; i < numOfReplicas; ++i) {
       int nodeId = r.nextInt(numOfNodes);
+      locationList.add(nodeId);
       nodes[nodeId].addStaticSplit(s);
     }
+    locationCache.put(s, locationList);
   }
 
   private void cacheAt(IndexedSplit s, int nodeId) {
@@ -153,10 +160,7 @@ public class FakeDistributedSystem {
     }
   }
 
-  public void runJob(FakeJob job) {
-
-    LOG.info("start running job");
-
+  private void runJobMap2(FakeJob job) {
     int finishedMaps = 0;
     int hit = 0;
     int miss = 0;
@@ -165,8 +169,12 @@ public class FakeDistributedSystem {
     Map<Integer, Pack> diskPackCache = new HashMap<Integer, Pack>();
     MapTaskPacker packer = new MapTaskPacker();
     packer.init(job.getTaskList(), nodes.length);
+    if (packer.numGroups() > 4) {
+      LOG.info(packer.groupsToString());
+    }
 
-    Set<Map2SplitMetaInfo> scheduledTasks = new HashSet<Map2SplitMetaInfo>();
+    Map<Map2SplitMetaInfo, Integer> scheduledTasks = 
+        new HashMap<Map2SplitMetaInfo, Integer>();
 
     LOG.info("finished initialization");
 
@@ -225,10 +233,12 @@ public class FakeDistributedSystem {
 
       if (task != null) {
         Map2SplitMetaInfo info = new Map2SplitMetaInfo(task[0], task[1]);
-        if (scheduledTasks.contains(info)) {
-          LOG.info("Task already exist: " + info.toString());
+        if (scheduledTasks.containsKey(info)) {
+          LOG.info("Already exist\ntask: " + info.toString() +
+                   "\nnode: " + scheduledTasks.get(info));
+          System.exit(-1);
         }
-        scheduledTasks.add(info);
+        scheduledTasks.put(info, nodeIndex);
 
         LOG.info("Node: " + nodeIndex + " working on: \n" + 
                   "split: " + task[0].getIndex() + '\n' + 
@@ -241,10 +251,8 @@ public class FakeDistributedSystem {
           hit ++;
         else
           miss ++;
-        if (enabledCache) {
-          cacheAt(task[0], nodeIndex);
-          cacheAt(task[1], nodeIndex);
-        }
+        cacheAt(task[0], nodeIndex);
+        cacheAt(task[1], nodeIndex);
         finishedMaps ++;
       }
     }
@@ -257,6 +265,100 @@ public class FakeDistributedSystem {
 
     if (!packer.isFinished()) {
       System.exit(-1);
+    }
+  }
+
+  private void runJobRandom(FakeJob job) {
+    LinkedList<IndexedSplit[]> taskList = new LinkedList<IndexedSplit[]>(
+        job.getTaskList());
+
+    int hit = 0;
+    int miss = 0;
+
+    while(!taskList.isEmpty()) {
+      Random r = new Random();
+      int nodeIndex = r.nextInt(nodes.length);
+      FakeNode node = getNode(nodeIndex);
+      IndexedSplit[] task = taskList.pop();
+      if (node.hasInStatic(task[0]) || node.hasInDynamic(task[0]))
+        hit ++;
+      else
+          miss ++;
+      if (node.hasInStatic(task[1]) || node.hasInDynamic(task[1]))
+        hit ++;
+      else
+        miss ++;
+    }
+    LOG.info("All tasks finsihed\n");
+    LOG.info("Hit: " + hit + " Miss: " + miss + '\n');
+  }
+
+  private void runJobLocality1(FakeJob job) {
+    Map<Integer, LinkedList<IndexedSplit[]>> taskCache =
+        new HashMap<Integer, LinkedList<IndexedSplit[]>>();
+
+    for (IndexedSplit[] pair : job.getTaskList()) {
+      List<Integer> locations = locationCache.get(pair[0]);
+      for (int i : locations) {
+        LinkedList<IndexedSplit[]> tasks = taskCache.get(i);
+        if (tasks == null) {
+          tasks = new LinkedList<IndexedSplit[]>();
+          taskCache.put(i, tasks);
+        }
+        tasks.add(pair);
+      }
+    }
+
+    Map<Map2SplitMetaInfo, Integer> scheduledTasks = 
+        new HashMap<Map2SplitMetaInfo, Integer>();
+
+
+    int finishedMaps = 0;
+    int hit = 0;
+    int miss = 0;
+
+    while (finishedMaps < job.getNumTasks()) {
+      Random r = new Random();
+      int nodeIndex = r.nextInt(nodes.length);
+      FakeNode node = getNode(nodeIndex);
+      LinkedList<IndexedSplit[]> tasks = taskCache.get(nodeIndex);
+      IndexedSplit[] task = null;
+      if (!tasks.isEmpty()) {
+        task = tasks.pop();
+      }
+      if (task != null) {
+        Map2SplitMetaInfo info = new Map2SplitMetaInfo(task[0], task[1]);
+        if (!scheduledTasks.containsKey(info)) {
+          scheduledTasks.put(info, nodeIndex);
+          finishedMaps ++;
+          if (node.hasInStatic(task[0]) || node.hasInDynamic(task[0]))
+            hit ++;
+          else
+            miss ++;
+          if (node.hasInStatic(task[1]) || node.hasInDynamic(task[1]))
+            hit ++;
+          else
+          miss ++;
+        }
+      }
+    }
+
+    LOG.info("All tasks finsihed\n");
+    LOG.info("Hit: " + hit + " Miss: " + miss + '\n');
+  }
+
+  public void runJob(FakeJob job) {
+
+    LOG.info("start running job");
+    switch (schedChoice) {
+      case 0: runJobMap2(job);
+              break;
+      case 1: runJobLocality1(job);
+              break;
+      case 2: runJobRandom(job);
+              break;
+      default:LOG.info("Invalid choice");
+              break;
     }
   }
 
