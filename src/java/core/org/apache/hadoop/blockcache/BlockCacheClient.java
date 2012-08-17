@@ -1,4 +1,4 @@
-package org.apache.hadoop.hdfs.blockcache;
+package org.apache.hadoop.blockcache;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -6,11 +6,98 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSClient.BlockReader;
 import org.apache.hadoop.ipc.RPC;
+import org.apache.hadoop.security.UserGroupInformation;
 
 import java.io.*;
 import java.net.InetSocketAddress;
+import java.net.URI;
 
-import org.apache.hadoop.hdfs.blockcache.BlockCacheProtocol.CachedBlock;
+import org.apache.hadoop.blockcache.BlockCacheProtocol.CachedBlock;
+
+public class BlockCacheClient implements java.io.Closable {
+
+  private static final String LOCAL_HOST = "127.0.0.1";
+  private static final int RPC_TIME_OUT = 10000; //10 seconds 
+
+  private final UserGroupInformation ugi;
+  private BlockCacheProtocol server;
+  //A token to identify self with server
+  private String token;
+
+  public BlockCacheClient(URI name, Configuraiton conf) {
+    ugi = UserGroupInformation.getCurrentUser();
+    int port = conf.getInt("block.cache.server.port", 
+                           BlockCacheProtocol.DEFAULT_SERVER_PORT);
+    InetSocketAddress serverAddr = new InetSocketAddress(LOCAL_HOST, port);
+    server = (BlockCacheProtocol)RPC.getProxy(
+        BlockCacheProtocol.class, BlockCacheProtocol.versionID,
+        serverAddr, conf, RPC_TIME_OUT);
+    token = server.registerClient(ugi.getUserName(), name, conf);
+  }
+
+  public FSDataInputStream open(Path f, int bufferSize, 
+                                FSDataInputStream in) throws IOException {
+    return new CachedFSDataInputStream(new CachedFSInputStream(
+            f, bufferSize, in));
+  }
+
+  public class CachedFSInputStream extends FSInputStream {
+
+    private final FSDataInputStream backupIn;
+    private FileInputStream localIn;
+    private final Path src;
+    private long positionInBlock; // position inside a block
+    private long pos;
+    private byte[] buf; //cache for local file
+    private volatile boolean stillValid;
+
+    public CachedFSInputStream(f, bufferSize, in) throws IOException {
+    }
+
+    @Override
+    public synchronized void close() throws IOException {
+
+    }
+
+    @Override
+    public synchronized int read() throws IOException {
+    }
+
+    @Override
+    public synchronized int read(
+        byte buf[], int off, int len) throws IOException {
+
+    }
+
+    @Override
+    public synchronized int read(long position, byte[] buffer,
+                                 int offset, int length) throws IOException {
+    }
+
+    @Override
+    public synchronized void seek(long pos) throws IOException {
+    }
+
+    @Override
+    public synchronized boolean seekToNewSource(
+        long targetPos) throws IOException {
+      return false;
+    }
+
+    @Override
+    public synchronized long getPos() throws IOException {
+      return pos;
+    }
+
+  }
+
+  public class CachedFSDataInputStream extends FSDataInputStream {
+
+    public CachedFSDataInputStream(CachedFSInputStream in) throws IOException {
+      super(in);
+    }
+  }
+}
 
 public class BlockCacheReader extends BlockReader {
   public static final Log LOG = LogFactory.getLog(BlockCacheReader.class);

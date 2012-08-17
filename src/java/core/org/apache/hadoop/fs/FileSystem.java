@@ -45,6 +45,10 @@ import org.apache.hadoop.security.SecurityUtil;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 
+//Added by xyu40@gatech.edu
+import org.apache.hadoop.blockcache.BlockCacheClient;
+//end xyu40@gatech.edu
+
 /****************************************************************
  * An abstract base class for a fairly generic filesystem.  It
  * may be implemented as a distributed filesystem, or as a "local"
@@ -89,6 +93,12 @@ public abstract class FileSystem extends Configured implements Closeable {
    * or the JVM is exited.
    */
   private Set<Path> deleteOnExit = new TreeSet<Path>();
+
+  //added by xyu40@gatech.edu
+  /**
+   * A block cache client to contact server.
+   */
+  private BlockCacheClient cacheClient;
 
   /**
    * This method adds a file system for testing so that we can find it later.
@@ -154,6 +164,9 @@ public abstract class FileSystem extends Configured implements Closeable {
    */
   public void initialize(URI name, Configuration conf) throws IOException {
     statistics = getStatistics(name.getScheme(), getClass());    
+    //Added by xyu40@gatech.edu
+    cacheClient = new BlockCacheClient(name, conf);
+    //end xyu40@gatech.edu
   }
 
   /** Returns a URI whose scheme and authority identify this FileSystem.*/
@@ -429,20 +442,19 @@ public abstract class FileSystem extends Configured implements Closeable {
 
   //Added by xyu40@gatech.edu
   /**
-   * Opens an Cached FSDatainputStream at the indicated Path.
-   * Only cached for Hdfs, and thus is overrided by DistributedFileSystem.
+   * Opens an Cached FSDataInputStream at the indicated Path backed by the
+   * original FSDataInputStream;
    */
   public FSDataInputStream openCachedReadOnly(Path f) 
       throws IOException {
-    LOG.debug("FS openCachedReadOnly");
-    return openCachedReadOnly(f, 
-        getConf().getInt("io.file.buffer.size", 4096));
+    return openCachedReadOnly(f, getConf().getInt(
+            "io.file.buffer.size", 4096));
   }
 
   public FSDataInputStream openCachedReadOnly(Path f, int bufferSize) 
       throws IOException {
     LOG.debug("FS openCachedOnly");
-    return open(f, bufferSize);
+    return cacheClient.open(f, bufferSize, open(f, bufferSize));
   }
   //end xyu40@gatech.edu
     

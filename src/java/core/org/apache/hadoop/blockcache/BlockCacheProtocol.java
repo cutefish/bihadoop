@@ -27,20 +27,24 @@ public interface BlockCacheProtocol extends VersionedProtocol {
     private long startOffset;
     private long blockLength;
     private String localPath;
+    private long validUntil;
 
     public CachedBlock() {
       this.fileName = null;
       this.startOffset = 0;
       this.blockLength = 0;
       this.localPath = null;
+      this.validUntil = 0;
     }
 
     public CachedBlock(String fileName, long startOffset,
-                       long blockLength, String localPath) {
+                       long blockLength, String localPath
+                       long validUntil) {
       this.fileName = fileName;
       this.startOffset = startOffset;
       this.blockLength = blockLength;
       this.localPath = localPath;
+      this.validUntil = validUntil;
     }
 
     @Override 
@@ -94,6 +98,7 @@ public interface BlockCacheProtocol extends VersionedProtocol {
       out.writeLong(this.blockLength);
       out.writeInt(this.localPath.length());
       out.write(this.localPath.getBytes());
+      out.writeLong(this.validUntil);
     }
 
     public void readFields(DataInput in) throws IOException {
@@ -107,6 +112,7 @@ public interface BlockCacheProtocol extends VersionedProtocol {
       byte[] localPathBuf = new byte[localPathLength];
       in.readFully(localPathBuf);
       this.localPath = new String(localPathBuf);
+      this.validUntil = in.readLong();
     }
 
   }
