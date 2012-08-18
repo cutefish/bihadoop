@@ -1,5 +1,9 @@
 package org.apache.hadoop.blockcache;
 
+import java.io.*;
+import java.net.InetSocketAddress;
+import java.net.URI;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -8,14 +12,11 @@ import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.security.UserGroupInformation;
-
-import org.apache.hadoop.hdfs.DFSClient.BlockReader;
-
-import java.io.*;
-import java.net.InetSocketAddress;
-import java.net.URI;
+import org.apache.hadoop.util.StringUtils;
 
 import org.apache.hadoop.blockcache.BlockCacheProtocol.CachedBlock;
+
+import org.apache.hadoop.hdfs.DFSClient.BlockReader;
 
 public class BlockCacheClient implements java.io.Closeable {
 
@@ -42,8 +43,7 @@ public class BlockCacheClient implements java.io.Closeable {
 
   public FSDataInputStream open(Path f, int bufferSize, 
                                 FSDataInputStream in) throws IOException {
-    return new CachedFSDataInputStream(new CachedFSInputStream(
-            f, bufferSize), in);
+    return new CachedFSDataInputStream(f, bufferSize, in);
   }
 
   public void close() {
@@ -51,6 +51,60 @@ public class BlockCacheClient implements java.io.Closeable {
     RPC.stopProxy(server);
   }
 
+  /**
+   * PosFileInputStream
+   *
+   * A wrapper class around FileInputStream so that we know exactly where we are
+   * when reading from a file.
+   */
+  public class PosFileInputStream extends FileInputStream {
+    private long pos;
+
+    public PosFileInputStream(String name) throws IOException {
+      super(name);
+    }
+
+    @Override
+    public int read() throws IOException {
+      int n = super.read();
+      if (n < 0) pos = -1;
+      else pos ++;
+      return n;
+    }
+
+    @Override
+    public int read(byte[] b) throws IOException {
+      int n = super.read(b);
+      if (n < 0) pos = -1;
+      else pos += n;
+      return n;
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) throws IOException {
+      int n = super.read(b, off, len);
+      if (n < 0) pos = -1;
+      else pos += n;
+      return n;
+    }
+
+    @Override
+    public long skip(long num) throws IOException {
+      int n = super.skip(num);
+      pos += n;
+      return n;
+    }
+
+    /**
+     * Return the current position. 
+     *
+     * It is possible that the returned value is beyond EOF.
+     */
+    public long getPos() {
+      return pos;
+    }
+  }
+  
   public class CachedFSInputStream extends FSInputStream {
 
     private boolean closed = false;
@@ -58,6 +112,7 @@ public class BlockCacheClient implements java.io.Closeable {
     private final Path src;
     private String localPath;
     private long blockStartOffset = 0; 
+    private long blockLength = 0;
     private long pos = 0;
     private byte[] buf; //cache for local file
     //To Do: maybe have a better protocol to return the file resource?
@@ -93,30 +148,42 @@ public class BlockCacheClient implements java.io.Closeable {
       try {
         if (localIn != null) {
           n = localIn.read(buf, off, len);
-          if (n > 0) {
+          if (n >= 0) {
             pos += n;
             return n;
           }
         }
       }
       catch(Exception e) {
-        LOG.warn("Local file read failure: " + localPath);
+        LOG.warn("Local file [" + localPath + 
+                 "] read failure: " + StringUtils.stringyfyException(e));
       }
 
-      //local input null or reaches EOF or exception
+      localIn.close();
+
+      //local input null or at EOF or exception
       //try local cache server
-      try {
-        CachedBlock block = server.cacheBlockAt(Path f, long pos);
-        localPath = block.getLocalPath();
-        blockStartOffset = block.getStartOffset();
-        localIn = new FileInputStream(localPath);
-      }
-      return 0;
+      CachedBlock block = server.cacheBlockAt(Path f, long pos);
+      localPath = block.getLocalPath();
+      blockStartOffset = block.getStartOffset();
+      blockLength = block.getBlockLength();
+      localIn = new FileInputStream(localPath);
+      localIn.skip(pos - blockStartOffset);
+
+      n = localIn.read(buf, off, len);
+      pos += n;
+
+      return n;
     }
 
     @Override
     public synchronized int read(long position, byte[] buffer,
                                  int offset, int length) throws IOException {
+      int n;
+      //try local reads first
+      if ((blockStartOffset <= position) &&
+          (position <= blockStartOffset + blockLength)) {
+      }
       return 0;
     }
 
@@ -139,122 +206,13 @@ public class BlockCacheClient implements java.io.Closeable {
 
   public class CachedFSDataInputStream extends FSDataInputStream {
 
-    public CachedFSDataInputStream(CachedFSInputStream in, 
+    private FSDataInputStream backupIn;
+    private Path file;
+    private int bufferSize;
+
+    public CachedFSDataInputStream(Path f, int bufferSize, 
                                    FSDataInputStream backupIn) throws IOException {
       super(in);
-    }
-  }
-}
-
-class BlockCacheReader extends BlockReader {
-  public static final Log LOG = LogFactory.getLog(BlockCacheReader.class);
-
-  private static final String LOCAL_HOST = "127.0.0.1";
-  private static final String SERVER_PORT = "block.cache.server.port";
-
-  ////50ms heartbeat to keep file exist
-  //private static final long heartbeatInterval = 50; 
-
-  private String src;
-  private long posInBlock;
-  private BlockCacheProtocol cacheServer;
-  private CachedBlock block;
-  private FileInputStream dataIn;
-  //private Thread heartbeatThread;
-  //private long numReads = 0;
-
-  public BlockCacheReader(Configuration conf, 
-                          String src, long pos) throws IOException {
-    super(new Path("blk_of" + src + "_" + pos), 1);
-    this.src = src;
-    int port = conf.getInt(SERVER_PORT, 
-        BlockCacheProtocol.DEFAULT_SERVER_PORT);
-    InetSocketAddress serverAddr = new InetSocketAddress(LOCAL_HOST, port);
-    cacheServer = (BlockCacheProtocol)RPC.getProxy(
-        BlockCacheProtocol.class, BlockCacheProtocol.versionID,
-        serverAddr, conf, 10000);
-//    cacheServer = (BlockCacheProtocol)RPC.getProxy(
-//        BlockCacheProtocol.class, BlockCacheProtocol.versionID,
-//        serverAddr, conf);
-    try {
-      long start = System.currentTimeMillis();
-      block = cacheServer.getCachedBlock(src, pos);
-      long end = System.currentTimeMillis();
-      LOG.info("RPC getCachedBlock time: " + (end - start) + " ms");
-    }
-    catch (IOException e) {
-      LOG.warn("BlockCacheServer connect failure at" + 
-          " port: " + port + 
-          " for file: " + src + 
-          " at position: " + pos);
-      throw e;
-    }
-    posInBlock = pos - block.getStartOffset();
-    ////send heartbeat if read before.
-    //heartbeatThread = new Thread(
-    //    new Runnable() {
-    //      private long lastNumReads = 0;
-    //      public void run() {
-    //        Thread.sleep(heartbeatInterval);
-    //        if (numReads > lastNumReads) {
-    //          try {
-    //          cacheServer.heartbeat(block);
-    //          lastNumReads = numReads;
-    //        }
-    //      }
-    //    });
-    //heartbeatThread.start();
-
-    try {
-      File dataFile = new File(block.getLocalPath());
-      dataIn = new FileInputStream(dataFile);
-      dataIn.skip(posInBlock);
-    }
-    catch (IOException e) {
-      LOG.warn("BlockCacheReader cannot open" + 
-          " local file: " + block.getLocalPath() +
-          " after connected with server");
-      throw e;
-    }
-
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("New BlockCacheReader for file: " + src + 
-          " at position: " + pos + 
-          " with startOffset: " + block.getStartOffset() + 
-          " length: " + block.getBlockLength() +
-          " at local: " + block.getLocalPath());
-    }
-  }
-
-  @Override
-  public synchronized int read(byte[] buf, int off, int len) throws IOException {
-    int n = dataIn.read(buf, off, len);
-    posInBlock += n;
-    return n;
-  }
-
-  @Override
-  public synchronized long skip(long n) throws IOException {
-    long actualSkip = dataIn.skip(n);
-    posInBlock += n;
-    return actualSkip;
-  }
-
-  public synchronized void seek(long n) throws IOException {
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("seek " + n);
-    }
-    throw new IOException("seek() is not supported in BlockCacheReader");
-  }
-
-  public synchronized void close() throws IOException {
-    if (dataIn != null) {
-      dataIn.close();
-      dataIn = null;
-    }
-    if (cacheServer != null) {
-      RPC.stopProxy(cacheServer);
-      cacheServer = null;
     }
   }
 }

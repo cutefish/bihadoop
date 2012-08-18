@@ -138,15 +138,19 @@ public class MapTaskPacker {
    * @param splitList List of joined splits.
    */
   public void init(List<IndexedSplit[]> splitList, int clusterSize) {
-  //public void init(JobInProgress job, int clusterSize) {
+
+    long start = System.currentTimeMillis();
 
     this.clusterSize = clusterSize;
     initJoinTable(splitList);
     initGroups();
     maxPackSize = totalNumMaps / clusterSize + 
         ((totalNumMaps % clusterSize == 0) ? 0 : 1);
+
+    long end = System.currentTimeMillis();
+
     LOG.info("Number of Groups size: " + groups.size());
-    LOG.info("Finished initializing for job");
+    LOG.info("Finished initializing for job in " + (end - start) + " ms.");
   }
 
   private void initJoinTable(List<IndexedSplit[]> splitList) {
@@ -210,7 +214,6 @@ public class MapTaskPacker {
       largestCache.put(groups.size() - 1, splitJoinSet);
       groupCache.put(split, groups.size() - 1);
     } 
-
   }
 
   private boolean shouldContain(Set<IndexedSplit> first,
@@ -290,9 +293,11 @@ public class MapTaskPacker {
    * hurt. The assumptions are that this function should be called not very
    * frequently and the cache size are not so large.
    */
-  public synchronized Pack obtainLastLevelPack(
-      Set<IndexedSplit> staticCache, Set<IndexedSplit> dynamicCache, 
-      long cacheSize) {
+  public synchronized Pack obtainLastLevelPack(Set<IndexedSplit> staticCache, 
+                                               Set<IndexedSplit> dynamicCache, 
+                                               long cacheSize) {
+    long start = System.currentTimeMillis();
+
     LOG.info("Generating a last level pack");
     //no pack if no group.
     if ((groups == null) || (groups.isEmpty())) return null;
@@ -429,7 +434,10 @@ public class MapTaskPacker {
     }
 
     removePairs(deleteList);
-    LOG.debug("Finished all local and non-local sets");
+
+    long end = System.currentTimeMillis();
+
+    LOG.debug("Finished last level packing in " + (end - start) + " ms " );
 
     return newPack;
   }
@@ -504,6 +512,8 @@ public class MapTaskPacker {
    * For memory level cache, obtained from a pack.
    */
   public Pack obtainSubpack(Pack pack, long cacheSize) {
+    long start = System.currentTimeMillis();
+
     LOG.info("Generating a sub pack\n");
 
     if ((pack == null) || (pack.isEmpty())) return null;
@@ -572,6 +582,9 @@ public class MapTaskPacker {
     for (IndexedSplit[] splitPair : deleteList) {
       pack.removePair(splitPair[0], splitPair[1]);
     }
+
+    long end = System.currentTimeMillis();
+    LOG.info("Finish sub-packing in " + (end - start) + " ms.");
     return subPack;
   }
 
