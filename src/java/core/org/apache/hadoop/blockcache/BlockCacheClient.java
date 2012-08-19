@@ -7,14 +7,16 @@ import java.net.URI;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.StringUtils;
 
-import org.apache.hadoop.blockcache.BlockCacheProtocol.CachedBlock;
+import org.apache.hadoop.blockcache.BlockCacheProtocol.RequestBlock;
 
 import org.apache.hadoop.hdfs.DFSClient.BlockReader;
 
@@ -38,12 +40,12 @@ public class BlockCacheClient implements java.io.Closeable {
     server = (BlockCacheProtocol)RPC.getProxy(
         BlockCacheProtocol.class, BlockCacheProtocol.versionID,
         serverAddr, conf, RPC_TIME_OUT);
-    token = server.registerClient(ugi.getUserName(), name, conf);
+    token = server.registerClient(ugi.getUserName(), name.toString(), conf);
   }
 
   public FSDataInputStream open(Path f, int bufferSize, 
-                                FSDataInputStream in) throws IOException {
-    return new CachedFSDataInputStream(f, bufferSize, in);
+                                FileSystem fs) throws IOException {
+    return new FSDataInputStream(new CachedFSInputStream(f, bufferSize, fs));
   }
 
   public void close() {
@@ -51,75 +53,35 @@ public class BlockCacheClient implements java.io.Closeable {
     RPC.stopProxy(server);
   }
 
-  /**
-   * PosFileInputStream
-   *
-   * A wrapper class around FileInputStream so that we know exactly where we are
-   * when reading from a file.
-   */
-  public class PosFileInputStream extends FileInputStream {
-    private long pos;
-
-    public PosFileInputStream(String name) throws IOException {
-      super(name);
-    }
-
-    @Override
-    public int read() throws IOException {
-      int n = super.read();
-      if (n < 0) pos = -1;
-      else pos ++;
-      return n;
-    }
-
-    @Override
-    public int read(byte[] b) throws IOException {
-      int n = super.read(b);
-      if (n < 0) pos = -1;
-      else pos += n;
-      return n;
-    }
-
-    @Override
-    public int read(byte[] b, int off, int len) throws IOException {
-      int n = super.read(b, off, len);
-      if (n < 0) pos = -1;
-      else pos += n;
-      return n;
-    }
-
-    @Override
-    public long skip(long num) throws IOException {
-      int n = super.skip(num);
-      pos += n;
-      return n;
-    }
-
-    /**
-     * Return the current position. 
-     *
-     * It is possible that the returned value is beyond EOF.
-     */
-    public long getPos() {
-      return pos;
-    }
-  }
-  
   public class CachedFSInputStream extends FSInputStream {
 
+    private enum ReadState {
+      REPLICA,
+      CACHE,
+      REMOTE,
+      EOF
+    }
+
+    //stream status
+    private FileSystem fs = null;
     private boolean closed = false;
+    private ReadState state = REMOTE;
     private FileInputStream localIn = null;
+    private FSInputStream backupIn = null;
     private final Path src;
-    private String localPath;
-    private long blockStartOffset = 0; 
-    private long blockLength = 0;
     private long pos = 0;
-    private byte[] buf; //cache for local file
+
+    //block status
+    //[blockStart, blockend)
+    private long blockStart = 0; 
+    private long blockEnd = 0;
     //To Do: maybe have a better protocol to return the file resource?
 
-    public CachedFSInputStream(Path f, int bufferSize) throws IOException {
-      src = f;
-      buf = new byte[bufferSize];
+    public CachedFSInputStream(Path f, int bufferSize, 
+                               FileSystem fs) throws IOException {
+      this.src = f;
+      this.fs = fs;
+      this.backupIn = fs.getInputStream(f, bufferSize);
     }
 
     @Override
@@ -128,6 +90,7 @@ public class BlockCacheClient implements java.io.Closeable {
         return
       if (localIn != null) 
         localIn.close();
+      backupIn.close();
       super.close();
       closed = true;
     }
@@ -141,78 +104,155 @@ public class BlockCacheClient implements java.io.Closeable {
     }
 
     @Override
-    public synchronized int read(byte buf[], 
-                                 int off, int len) throws IOException {
-      int n;
-      //try local reads first
-      try {
-        if (localIn != null) {
-          n = localIn.read(buf, off, len);
-          if (n >= 0) {
-            pos += n;
-            return n;
+    public synchronized int read(byte buf[], int off, 
+                                 int len) throws IOException {
+      if (closed) {
+        throw new IOException("Stream closed");
+      }
+
+      long n;
+
+      //only contact server and update state once
+      boolean shouldUpdateState = true;
+
+      while (true) {
+        if (blockStart <= pos < blockEnd) {
+          //use the current state to read
+          int maxLength = (pos + len >= blockEnd) ? blockEnd - pos : len;
+          switch (state) {
+            case REPLICA:
+              n = backupIn.read(buf, off, maxLength);
+              pos += n;
+              LOG.debug("Read replica local");
+              return n;
+            case CACHE:
+              //use try catch so that we can try again
+              try {
+                n = localIn.read(buf, off, maxLength);
+                pos += n;
+                if (n < 0) throw new IOException("Unexpected eof");
+                LOG.debug("Read cache local");
+                return n;
+              }
+              catch (IOException e) {
+                LOG.warn("Read cache local failed: " + 
+                         StringUtils.stringifyException(e));
+                localIn.close();
+                localIn = null;
+              }
+            case EOF:
+              return -1;
+            case REMOTE:
+              break;
           }
         }
+
+        //we are here because the current state stales(likely out of block)
+        if (shouldUpdateState) {
+          try {
+            updateState();
+          }
+          catch (IOException e) {
+            LOG.warn("Error update state from server: " + 
+                     StringUtils.stringifyException(e));
+            break;
+          }
+          shouldUpdateState = false;
+          continue;
+        }
+        break;
       }
-      catch(Exception e) {
-        LOG.warn("Local file [" + localPath + 
-                 "] read failure: " + StringUtils.stringyfyException(e));
+
+      //we are here because we failed again during or after state update
+      //just use back up stream for one block
+      //this is very inefficient(high latency), but we expect it is rare.
+      FileStatus file = fs.getFileStatus(src);
+      if (pos >= file.getLen()) return -1;
+      BlockLocation[] blocks = fs.getBlockLocations(file, pos, 1);
+      if ((blocks == null) || (blocks.length == 0)) {
+        throw IOException("No block information for path: " + src);
       }
-
-      localIn.close();
-
-      //local input null or at EOF or exception
-      //try local cache server
-      CachedBlock block = server.cacheBlockAt(Path f, long pos);
-      localPath = block.getLocalPath();
-      blockStartOffset = block.getStartOffset();
-      blockLength = block.getBlockLength();
-      localIn = new FileInputStream(localPath);
-      localIn.skip(pos - blockStartOffset);
-
-      n = localIn.read(buf, off, len);
+      if (blocks.length > 1) {
+        throw IOException("Too many block information at" + 
+                          " src: " + src.getName() + 
+                          " pos: " + pos);
+      }
+      blockStart = blocks[0].getOffset();
+      blockEnd = blockStart + blocks[0].getLength();
+      int maxLength = (pos + len > blockEnd) ? blockEnd - pos : len;
+      backupIn.seek(pos);
+      n = backupIn.read(buf, off, maxLength);
       pos += n;
-
       return n;
     }
 
-    @Override
-    public synchronized int read(long position, byte[] buffer,
-                                 int offset, int length) throws IOException {
-      int n;
-      //try local reads first
-      if ((blockStartOffset <= position) &&
-          (position <= blockStartOffset + blockLength)) {
+    private void updateState() throws IOException {
+      RequestBlock block = server.cacheBlockAt(token, 
+                                               src.toUri().toString(), pos);
+      blockStart = block.getStartOffset();
+      blockEnd = blockStart + block.getBlockLength();
+
+      if (blockStart == blockEnd == -1) {
+        //we reach eof
+        state = EOF;
+        return; 
       }
-      return 0;
+
+      if (block.shouldUseReplica()) {
+        //server suggests using replica, so we fall back to original method
+        //it is not necessary that the backupIn will read from the local
+        //node, however, it is highly likely that it does so.
+        backupIn.seek(pos);
+        state = REPLICA;
+        return;
+      }
+
+      //here, server has already cached the block for us
+      String localPath = block.getLocalPath();
+      localIn = new FileInputStream(localPath);
+      localIn.skip(pos - blockStartOffset);
+      state = CACHE;
+      return;
     }
 
     @Override
     public synchronized void seek(long pos) throws IOException {
+      if (blockStart <= pos < blockEnd) {
+        try {
+          if (state == REPLICA) {
+            backupIn.seek(pos);
+            this.pos = pos;
+            return;
+          }
+
+          if (state == CACHE) {
+            long shouldSkip = pos - blockStart;
+            while(shouldSkip > 0) {
+              long n = localIn.skip(shouldSkip);
+              shouldSkip -= n;
+            }
+            this.pos = pos;
+            return;
+          }
+        }
+        catch (IOException e) {
+          LOG.warn("Seek problem: " + StringUtils.stringifyException(e));
+        }
+      }
+      state = REMOTE;
+      this.pos = pos;
+      localIn.close();
+      localIn = null;
     }
 
-    @Override
     public synchronized boolean seekToNewSource(
         long targetPos) throws IOException {
+      seek(targetPos);
       return false;
     }
 
-    @Override
     public synchronized long getPos() throws IOException {
       return pos;
-    }
-
-  }
-
-  public class CachedFSDataInputStream extends FSDataInputStream {
-
-    private FSDataInputStream backupIn;
-    private Path file;
-    private int bufferSize;
-
-    public CachedFSDataInputStream(Path f, int bufferSize, 
-                                   FSDataInputStream backupIn) throws IOException {
-      super(in);
     }
   }
 }

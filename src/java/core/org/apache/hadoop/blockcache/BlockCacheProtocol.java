@@ -3,13 +3,14 @@ package org.apache.hadoop.blockcache;
 import java.io.IOException;
 import java.io.DataInput;
 import java.io.DataOutput;
+import java.net.URI;
 
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableFactory;
 import org.apache.hadoop.io.WritableFactories;
 import org.apache.hadoop.ipc.VersionedProtocol;
 
-//xyu40@gatech.edu
 /******************************************************************************
  * Protocol that a BlockCacheReader used to contact BlockCacheServer.
  * The BlockCacheServer is the server, that implement this protocol.
@@ -22,21 +23,24 @@ public interface BlockCacheProtocol extends VersionedProtocol {
   /**
    * This is a wrapper for the information passed between server and client.
    */
-  public static class CachedBlock implements Writable {
+  public static class RequestBlock implements Writable {
     private String fileName;
     private long startOffset;
     private long blockLength;
     private String localPath;
+    private boolean useReplica;
 
-    public CachedBlock() {
-      this.fileName = null;
+    public RequestBlock() {
+      this.fileName = "";
       this.startOffset = 0;
       this.blockLength = 0;
-      this.localPath = null;
+      this.localPath = "";
+      this.useReplica = false;
     }
 
-    public CachedBlock(String fileName, long startOffset,
-                       long blockLength, String localPath) {
+    public RequestBlock(String fileName, long startOffset,
+                       long blockLength, String localPath, 
+                       boolean useReplica) {
       this.fileName = fileName;
       this.startOffset = startOffset;
       this.blockLength = blockLength;
@@ -46,9 +50,9 @@ public interface BlockCacheProtocol extends VersionedProtocol {
     @Override 
     public boolean equals(Object to) {
       if (this == to) return true;
-      if (!(to instanceof CachedBlock)) return false;
-      return (fileName.equals(((CachedBlock)to).getFileName()) &&
-              startOffset == ((CachedBlock)to).getStartOffset());
+      if (!(to instanceof RequestBlock)) return false;
+      return (fileName.equals(((RequestBlock)to).getFileName()) &&
+              startOffset == ((RequestBlock)to).getStartOffset());
     }
 
     @Override
@@ -76,53 +80,57 @@ public interface BlockCacheProtocol extends VersionedProtocol {
       localPath = path;
     }
 
+    public boolean shouldUseReplica() {
+      return useReplica;
+    }
+
     //////////////////////////////////////////////////
     // Writable
     //////////////////////////////////////////////////
     static {                                      // register a ctor
       WritableFactories.setFactory
-        (CachedBlock.class,
+        (RequestBlock.class,
          new WritableFactory() {
-           public Writable newInstance() { return new CachedBlock(); }
+           public Writable newInstance() { return new RequestBlock(); }
          });
     }
 
     public void write(DataOutput out) throws IOException {
-      out.writeInt(this.fileName.length());
-      out.write(this.fileName.getBytes());
+      Text.writeString(out, this.fileName);
       out.writeLong(this.startOffset);
       out.writeLong(this.blockLength);
-      out.writeInt(this.localPath.length());
+      Text.writeString(out, this.localPath);
       out.write(this.localPath.getBytes());
     }
 
     public void readFields(DataInput in) throws IOException {
-      int fileNameLength = in.readInt();
-      byte[] fileNameBuf = new byte[fileNameLength];
-      in.readFully(fileNameBuf);
-      this.fileName = new String(fileNameBuf);
+      this.fileName = Text.readString(in);
       this.startOffset = in.readLong();
       this.blockLength = in.readLong();
-      int localPathLength = in.readInt();
-      byte[] localPathBuf = new byte[localPathLength];
-      in.readFully(localPathBuf);
-      this.localPath = new String(localPathBuf);
+      this.localPath = Text.readString(in);
     }
 
   }
 
+  ////////////////////////////////////////////////////
+  //The Protocol
+  ///////////////////////////////////////////////////
   /**
-   * Returns the CachedBlock object containing cache information.
+   * Register the client and return a token.
+   */
+  String registerClient(String userName, String uri, Configuration conf);
+
+  /**
+   * Unregister a client
+   */
+  void unregisterClient(String token);
+
+  /**
+   * Returns the RequestBlock object containing cache information.
    * 
    * The block contains the position required.
    * Throw IOException if cannot cache.
    */
-  CachedBlock getCachedBlock(String src, long pos) throws IOException;
+  RequestBlock cacheBlockAt(String token, String path, long pos) throws IOException;
 
-  ///**
-  // * Heartbeat to keep local file exist.
-  // *
-  // * Throw IOException if block evicted.
-  // */
-  //boolean heartbeat(CachedBlock block) throws IOException;
 }

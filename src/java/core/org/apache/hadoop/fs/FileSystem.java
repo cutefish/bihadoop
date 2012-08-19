@@ -454,7 +454,11 @@ public abstract class FileSystem extends Configured implements Closeable {
   public FSDataInputStream openCachedReadOnly(Path f, int bufferSize) 
       throws IOException {
     LOG.debug("FS openCachedOnly");
-    return cacheClient.open(f, bufferSize, open(f, bufferSize));
+    return cacheClient.open(f, bufferSize, this);
+  }
+
+  public FSInputStream getInputStream(Path f, int bufferSize) throws IOException {
+    return null;
   }
   //end xyu40@gatech.edu
     
