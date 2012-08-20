@@ -7,6 +7,7 @@ import java.net.URI;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSInputStream;
@@ -16,9 +17,8 @@ import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.StringUtils;
 
-import org.apache.hadoop.blockcache.BlockCacheProtocol.RequestBlock;
-
-import org.apache.hadoop.hdfs.DFSClient.BlockReader;
+import org.apache.hadoop.blockcache.BlockCacheProtocol.Block;
+import org.apache.hadoop.blockcache.BlockCacheProtocol.Token;
 
 public class BlockCacheClient implements java.io.Closeable {
 
@@ -29,8 +29,8 @@ public class BlockCacheClient implements java.io.Closeable {
 
   private final UserGroupInformation ugi;
   private BlockCacheProtocol server;
-  //A token to identify self with server
-  private String token;
+  //A token to identify the corresponding fs with server
+  private Token token;
 
   public BlockCacheClient(URI name, Configuration conf) throws IOException {
     ugi = UserGroupInformation.getCurrentUser();
@@ -187,8 +187,8 @@ public class BlockCacheClient implements java.io.Closeable {
     }
 
     private void updateState() throws IOException {
-      RequestBlock block = server.cacheBlockAt(token, 
-                                               src.toUri().toString(), pos);
+      Block block = server.cacheBlockAt(token, 
+                                        src.toUri().toString(), pos);
       blockStart = block.getStartOffset();
       blockEnd = blockStart + block.getBlockLength();
 

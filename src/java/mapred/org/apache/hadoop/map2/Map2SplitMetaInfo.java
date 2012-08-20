@@ -36,9 +36,9 @@ public class Map2SplitMetaInfo implements Comparable {
   public boolean equals(Object to) {
     if (this == to) return true;
     if (!(to instanceof Map2SplitMetaInfo)) return false;
-    Map2SplitMetaInfo other = (Map2SplitMetaInfo) to;
-    return (pair[0].equals(other.pair[0]) &&
-            pair[1].equals(other.pair[1]));
+    Map2SplitMetaInfo that = (Map2SplitMetaInfo) to;
+    return (pair[0].equals(that.pair[0]) &&
+            pair[1].equals(that.pair[1]));
   }
 
   @Override
@@ -49,10 +49,10 @@ public class Map2SplitMetaInfo implements Comparable {
   @Override
   public int compareTo(Object to) {
     if (!(to instanceof Map2SplitMetaInfo)) throw new ClassCastException();
-    Map2SplitMetaInfo other = (Map2SplitMetaInfo) to;
-    int ret = pair[0].compareTo(other.pair[0]);
+    Map2SplitMetaInfo that = (Map2SplitMetaInfo) to;
+    int ret = pair[0].compareTo(that.pair[0]);
     if (ret == 0)
-      ret = pair[1].compareTo(other.pair[1]);
+      ret = pair[1].compareTo(that.pair[1]);
     return ret;
   }
 
