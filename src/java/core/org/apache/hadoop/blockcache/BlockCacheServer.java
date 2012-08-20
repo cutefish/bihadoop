@@ -15,7 +15,7 @@ import java.util.List;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hdfs.DFSClient;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RPC.Server;
 import org.apache.hadoop.util.StringUtils;
@@ -30,47 +30,127 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   //configuration strings
   private static final String SERVER_PORT = "block.cache.server.port";
   private static final String SERVER_NHANDLEER = "block.cache.server.num.handler";
-  private static final String CACHE_CAPACITY = "block.cache.capacity";
+  private static final String CACHE_CAPACITY = "block.cache.capacity.per.user.fs";
   private static final String LOCAL_DIR = "block.cache.local.dir";
 
   //default values
   private static final String LOCAL_HOST = "127.0.0.1";
   private static final int DEFAULT_BUFFER_SIZE = 4096;
   private static final long DEFAULT_CACHE_CAPACITY = 1024 * 1024 * 1024; //1G
-  enum BlockCachingState {
-    DONE,
-    UNDER_CONSTRUCTION,
-    FAILED
-  }
+  private static final String DEFAULT_CACHE_DIR = "/tmp/hadoop/blockcache";
 
   //states
   private boolean shouldRun = true;
   private long cacheSizePerUserFS;
   private String localCacheDir;
   private Cache cache;
-  private CacheFileFreeStore freeStore;
-  private Server rpcListener;
+  private CacheFileFreeStore freeStore = new CacheFileFreeStore();
 
-  //server
+  //service
+  private Server rpcListener;
+  private Thread freeStoreThread;
+
+  public BlockCacheServer(Configuration conf) throws IOException {
+    //states
+    cacheSizePerUserFS = conf.getLong(CACHE_CAPACITY, DEFAULT_CACHE_CAPACITY);
+    localCacheDir = conf.getString(LOCAL_DIR, DEFAULT_CACHE_DIR);
+    File path = new File(localCacheDir);
+    if (path.exists()) {
+      deleteDirFiles(File dir);
+    }
+    else {
+      LOG.info("Making block cacahe dir at " + localCacheDir);
+      if (!path.mkdir()) {
+        throw new IOException(
+            "Cannot set local cache dir at " + localCacheDir);
+      }
+    }
+    cache = new Cache();
+    freeStoreThread = new Thread(freeStore);
+    freeStoreThread.setDaemon(true);
+
+    //server
+    int port = conf.getInt(
+        SERVER_PORT, BlockCacheProtocol.DEFAULT_SERVER_PORT);
+    int numHandler = conf.getInt(SERVER_NHANDLEER, 3);
+    rpcListener = RPC.getServer(this, LOCAL_HOST, port, numHandler, 
+                                false, conf);
+  }
   
+  private void deleteDirFiles(File dir) {
+    String[] files = dir.list();
+    for (String file : files) {
+      LOG.info("delete file: " + file);
+      (new File(localCacheDir + "/" + file)).delete();
+    }
+  }
+
+  //No matter what exception we get, keep running
+  public void run() {
+    while(shouldRun) {
+      try {
+        rpcListener.start();
+        join();
+      }
+      catch(Exception e) {
+        LOG.error("Exception: " + StringUtils.stringifyException(e));
+        try {
+          Thread.sleep(5000);
+        }
+        catch (InterruptedException ie) {
+        }
+      }
+    }
+  }
+
+  //wait for the server to finish
+  //normally it runs forever
+  public void join() {
+    try {
+      rpcListener.join();
+    }
+    catch (InterruptedException ie) {
+    }
+  }
+
+  public void shutdown() {
+    shouldRun = false;
+    if (rpcListener != null) {
+      rpcListener.stop();
+    }
+    freeStoreThread.join();
+    deleteDirFiles(new Path(localCacheDir));
+  }
+
   /**
-   * A hierarchical cache of data
-   * Levels:
-   * Token    : caches FileSystem
-   * +Path    : caches FSInputStream
-   * ++Block  : caches Blocks
+   * A multiple key cache
+   * Possible keys:
+   * Token                    : caches FileSystem
+   * Token + Path             : caches FSInputStream
+   * Token + Path + position  : caches Blocks
    */
   class Cache {
 
-    private Map<String, FileSystem> fsCache; // token -> FS
-    private Map<String, FSInputStream> streamCache; // (token, path) -> FSInputStream
-    private Map<String, CachedBlocks> blockCache; //token -> CachedBlocks
+    //token -> FS
+    private Map<String, FileSystem> fsCache; 
+    //(token, path) -> FSInputStream
+    private Map<String, FSDataInputStream> streamCache; 
+    //token -> CachedBlocks
+    private Map<String, CachedBlocks> blockCache; 
 
     Cache() {
       fsCache = new synchronizedMap(
           new HashMap<String, FileSystem>());
+      int size = 100;
       streamCache = new synchronizedMap(
-          new HashMap<String, FSInputStream>());
+          new LinkedHashMap<String, FSDataInputStream>() {
+            @Override
+            protected boolean removeEldestEntry(
+                Map.Entry<String, FSDataInputStream> eldest) {
+              return size() > size;
+            }
+
+          });
       blockCache = new synchronizedMap(
           new HashMap<String, CachedBlocks>());
     }
@@ -79,24 +159,28 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       return token.toString() + "/" + path;
     }
     
+    //fs key
     void put(Token token, FileSystem fs) {
       FSCache.put(token, fs);
     }
 
+    //fs key
     FileSystem get(Token token) {
       return FSCache.get(token);
     }
 
+    //stream key
     void put(Token token, String path, FSInputStream in) {
       StreamCache.put(combineKey(token, path), in);
     }
 
+    //stream key
     void get(Token token, String path) {
       StreamCache.get(combineKey(token, path));
     }
 
     /**
-     * Put a block into the blockCache
+     * Put a block key value pair into the blockCache
      *
      * @param token userName and FS of the block
      * @param path path of the block
@@ -118,6 +202,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       return blocks.put(path, startOffset, length, useReplica);
     }
 
+    //block key
     Block get(Token token, String path, long pos) {
       synchronized(blockCache) {
         CachedBlocks blocks = blockCache.get(token);
@@ -234,6 +319,13 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
         return fileBlockLists.get(path).get(targetIndex);
       }
     }
+
+    //clean up cached resources
+    public void cleanup() {
+      for (FSDataInputStream in : streamCache.valueSet()) {
+        in.close();
+      }
+    }
   }
 
   /**
@@ -241,7 +333,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
    */
   class CacheFileFreeStore implements Runnable {
 
-    private int NUM_BLOCK_THRESHOLD = 2;
+    private int NUM_BLOCK_THRESHOLD = 10;
     private List<Block> deleteList = new LinkedLIst<Block>();
 
     void add(Block b) {
@@ -254,7 +346,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     }
     
     void run(Block b) {
-      while(true) {
+      while(shouldRun) {
         synchronized(deleteList) {
           if (!deleteList.empty()) {
             for (Block b : deleteList) {
@@ -264,11 +356,15 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
                 LOG.warn("CacheFileFreeStore delete file failed," + 
                          " file: " +  file);
               }
+              else {
+                LOG.debug("CacheFileFreeStore delete file succeeded," + 
+                         " file: " +  file);
+              }
             }
           }
           else {
             try {
-              deleteList.wait();
+              deleteList.wait(1000);
             }
             catch(InterruptedException e) {
             }
@@ -277,6 +373,26 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       }
     }
   }
+
+
+  ////////////////////////////////////////////////////
+  //The BlockCacheProtocol
+  ///////////////////////////////////////////////////
+  public long getProtocolVersion(String protocol, long clientVersion) {
+    return BlockCacheProtocol.versionID;
+  }
+
+  Token registerFS(String userName, String uri, 
+                   Cofniguration conf) throws IOException {
+    synchronized(this) {
+      Token token = new Token(uri, conf, userName);
+      if (cache.get(token) == null) {
+        FileSystem fs = new FileSystem(uri, conf);
+        cache.put(token, fs);
+      }
+    }
+  }
+
 
 }
 
@@ -292,7 +408,7 @@ public class BlockCacheServer extends DFSClient
   private static final long UNDER_CONSTRUCTION = -1;
   private static final long FAILED_CONSTRUCTION = 0;
 
-  private boolean shouldRun = true;
+  private volatile boolean shouldRun = true;
   private Map<String, DFSInputStream> streamCache; //file -> DFSInputStream
   private Map<CachedBlock, TimedCachedBlock> cachedBlocks; 
   private Server rpcListener;
@@ -494,6 +610,7 @@ public class BlockCacheServer extends DFSClient
     shouldRun = false;
     if (rpcListener != null) {
       rpcListener.stop();
+      freeStoreThread.join();
     }
 
     try {
@@ -509,7 +626,7 @@ public class BlockCacheServer extends DFSClient
   //normally it runs forever
   public void join() {
     try {
-      this.rpcListener.join();
+      rpcListener.join();
     }
     catch (InterruptedException ie) {
     }

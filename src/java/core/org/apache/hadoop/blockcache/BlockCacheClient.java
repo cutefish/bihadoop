@@ -40,7 +40,7 @@ public class BlockCacheClient implements java.io.Closeable {
     server = (BlockCacheProtocol)RPC.getProxy(
         BlockCacheProtocol.class, BlockCacheProtocol.versionID,
         serverAddr, conf, RPC_TIME_OUT);
-    token = server.registerClient(ugi.getUserName(), name.toString(), conf);
+    token = server.registerFS(ugi.getUserName(), name.toString(), conf);
   }
 
   public FSDataInputStream open(Path f, int bufferSize, 
@@ -49,7 +49,6 @@ public class BlockCacheClient implements java.io.Closeable {
   }
 
   public void close() {
-    server.unregisterClient(token);
     RPC.stopProxy(server);
   }
 
