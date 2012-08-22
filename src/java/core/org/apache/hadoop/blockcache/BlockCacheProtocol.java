@@ -37,6 +37,6 @@ public interface BlockCacheProtocol extends VersionedProtocol {
   /**
    * Returns a list of blocks cached on the server for a user
    */
-  public SegmentSet getCachedBlocks(String user) throws IOException;
+  public Segments getCachedBlocks(String user) throws IOException;
 
 }

@@ -7,7 +7,7 @@ package org.apache.hadoop.fs;
  * Segment.
  *
  */
-public class Segment implements Writable, Comparable {
+public class Segment implements Writable {
   private Path path;
   private long off;
   private long len;

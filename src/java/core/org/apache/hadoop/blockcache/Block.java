@@ -43,6 +43,18 @@ public class Block implements Writable {
     return localPath;
   }
 
+  public void setLocalPath(String localPath) {
+    this.localPath = localPath;
+  }
+
+  public Segment getSegment() {
+    return seg;
+  }
+
+  public String toString() {
+    return seg.toString();
+  }
+
   //////////////////////////////////////////////////
   // Writable
   //////////////////////////////////////////////////
