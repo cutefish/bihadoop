@@ -17,9 +17,6 @@ import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.StringUtils;
 
-import org.apache.hadoop.blockcache.BlockCacheProtocol.Block;
-import org.apache.hadoop.blockcache.BlockCacheProtocol.Token;
-
 public class BlockCacheClient implements java.io.Closeable {
 
   private static final Log LOG = LogFactory.getLog(BlockCacheClient.class);
@@ -29,10 +26,8 @@ public class BlockCacheClient implements java.io.Closeable {
 
   private final UserGroupInformation ugi;
   private BlockCacheProtocol server;
-  //A token to identify the corresponding fs with server
-  private Token token;
 
-  public BlockCacheClient(URI name, Configuration conf) throws IOException {
+  public BlockCacheClient() throws IOException {
     ugi = UserGroupInformation.getCurrentUser();
     int port = conf.getInt("block.cache.server.port", 
                            BlockCacheProtocol.DEFAULT_SERVER_PORT);
@@ -40,7 +35,6 @@ public class BlockCacheClient implements java.io.Closeable {
     server = (BlockCacheProtocol)RPC.getProxy(
         BlockCacheProtocol.class, BlockCacheProtocol.versionID,
         serverAddr, conf, RPC_TIME_OUT);
-    token = server.registerFS(ugi.getUserName(), name.toString(), conf);
   }
 
   public FSDataInputStream open(Path f, int bufferSize, 
@@ -167,7 +161,7 @@ public class BlockCacheClient implements java.io.Closeable {
       //this is very inefficient(high latency), but we expect it is rare.
       FileStatus file = fs.getFileStatus(src);
       if (pos >= file.getLen()) return -1;
-      BlockLocation[] blocks = fs.getBlockLocations(file, pos, 1);
+      BlockLocation[] blocks = fs.getFileBlockLocations(file, pos, 1);
       if ((blocks == null) || (blocks.length == 0)) {
         throw IOException("No block information for path: " + src);
       }
@@ -186,12 +180,13 @@ public class BlockCacheClient implements java.io.Closeable {
     }
 
     private void updateState() throws IOException {
-      Block block = server.cacheBlockAt(token, 
+      Block block = server.cacheBlockAt(fs.getUri().toString(),
+                                        ugi.getUserName(),
                                         src.toUri().toString(), pos);
       blockStart = block.getStartOffset();
       blockEnd = blockStart + block.getBlockLength();
 
-      if (blockStart == blockEnd == -1) {
+      if (blockStart == -1) {
         //we reach eof
         state = EOF;
         return; 

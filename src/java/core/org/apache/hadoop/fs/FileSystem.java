@@ -165,7 +165,7 @@ public abstract class FileSystem extends Configured implements Closeable {
   public void initialize(URI name, Configuration conf) throws IOException {
     statistics = getStatistics(name.getScheme(), getClass());    
     //Added by xyu40@gatech.edu
-    cacheClient = new BlockCacheClient(name, conf);
+    cacheClient = new BlockCacheClient();
     //end xyu40@gatech.edu
   }
 
