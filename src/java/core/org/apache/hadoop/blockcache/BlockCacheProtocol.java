@@ -13,6 +13,8 @@ import org.apache.hadoop.io.WritableFactory;
 import org.apache.hadoop.io.WritableFactories;
 import org.apache.hadoop.ipc.VersionedProtocol;
 
+import org.apache.hadoop.fs.Segments;
+
 /******************************************************************************
  * Protocol that a BlockCacheClient used to contact BlockCacheServer.
  * The BlockCacheServer is the server, that implement this protocol.

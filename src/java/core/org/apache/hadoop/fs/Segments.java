@@ -1,4 +1,4 @@
-package org.apache.hadoop.blockcache;
+package org.apache.hadoop.fs;
 
 /**
  * Writable array of segments for RPC
@@ -12,6 +12,10 @@ public class Segments implements Writable {
 
   public Segments(Segment[] segs) {
     this.segmnets = segs;
+  }
+
+  public Segment[] get() {
+    return segments;
   }
 
   //////////////////////////////////////////////////

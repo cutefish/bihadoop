@@ -1,5 +1,7 @@
 package org.apache.hadoop.fs;
 
+import java.net.URI;
+
 /**
  * Unique Identity of a contiguous block of data.
  *
@@ -28,6 +30,11 @@ public class Segment implements Writable {
     this.path = path;
     this.off = off;
     this.len = len;
+  }
+
+  public Segment(FileSystem fs, Path path, long off, long len) {
+    URI uri = fs.getUri();
+    Segment(uri.getScheme(), uri.getAuthority(), path.toString(), off, len);
   }
 
   public Path getPath() {

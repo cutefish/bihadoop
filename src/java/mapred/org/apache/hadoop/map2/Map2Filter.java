@@ -4,5 +4,5 @@ public interface Map2Filter {
   /**
    * Return true if accept this IndexedSplit pair
    */
-  public boolean accept(IndexedSplit s0, IndexedSplit s1);
+  public boolean accept(String idx0, String idx1);
 }
