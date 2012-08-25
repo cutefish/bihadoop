@@ -18,16 +18,14 @@ public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
 
   private static final Log LOG = LogFactory.getLog(Map2InputFormat.class);
 
-  private Map<Segment, String[]> segLocations = 
-      new HashMap<Segment, String[]>();
-
   @Override
   public List<InputSplit> getSplits(JobContext job) throws IOException {
 
     List<InputSplit> splits;
     List<String> idxList = new ArrayList<String>();
     List<Segment[]> segmentList = new ArrayList<Segment[]>();
-    List<String[]> locationList = new ArrayList<String[]>();
+    Map<Segment, String[]> segLocMap = new HashMap<Segment, String[]>();
+
     List<FileStatus> files = listStatus(job);
     IndexedFileReader reader;
     NetworkTopology clusterMap = new NetworkTopology();
@@ -40,10 +38,11 @@ public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
       if (fileNameAsIndex(job)) {
         //use file name as index, total file as the segment
         indices.add(path.toString());
-        segmentList.add(new Segment[] { new Segment(path, 0, length) });
+        Segment seg = new Segment(path, 0, length);
+        segmentList.add(new Segment[] { seg });
         String[] splitHosts = getSplitHosts(blkLocations, 
                                             0, length, clusterMap);
-        locationList.add(splitHosts);
+        segLocMap.put(seg, splitHosts);
       }
       else {
         reader.readIndexedFile(fs, path);
@@ -51,7 +50,7 @@ public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
         indices.addAll(reader.getIndexList());
         List<Segment[]> indexedSegments = reader.getSegmentList();
         segmentList.addAll(indexedSegments);
-        //combine the location of segment[] into a location[]
+        //get locations for all segments
         for (Segment[] segs : indexedSegments) {
           ArrayList<String> locations = new ArrayList<String>();
           for (Segment seg : segs) {
@@ -59,10 +58,8 @@ public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
             long len = seg.getLength();
             String[] splitHosts = getSplitHosts(blkLocations, off, 
                                                 len, clusterMap);
-            locations.add(Arrays.asList(splitHosts));
-            segLocations.put(seg, splitHosts);
+            segLocMap.put(seg, splitHosts);
           }
-          locationList.add(locations.toArray(new String[locations.size()]));
         }
       }
     }
@@ -72,26 +69,27 @@ public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
     //To do: this filtering interface is where the restriction of two input is
     //enforced. Maybe use a parser in the future
 
-    splits = filterAndCombine(job, idxList, segmentList, locationList);
+    splits = filterAndCombine(job, idxList, segmentList, segLocMap);
 
     return splits;
   }
 
-  protected List<InputSplit> filterAndCombine(JobContext job, 
-                                              List<String> idxList,
-                                              List<Segment[]> segmentList,
-                                              List<String[]> locationList) {
+  protected List<InputSplit> filterAndCombine(
+      JobContext job, 
+      List<String> idxList, List<Segment[]> segmentList, 
+      Map<Segment, String[]> segLocMap) {
     List<InputSplit> splits = new ArrayList<InputSplit>();
     Map2Filter filter = getIndexFilter(job);
     for (int i = 0; i < idxList.size(); ++i) {
       for (int j = i; j < idxList.size(); ++j) {
         if (filter.accept(idxList.get(i), idxList.get(j))) {
-          Segment[] combinedSegments = combineArray(
+          Segment[] segs = combineArray(
               segmentList.get(i), segmentList.get(j));
-          String[] combinedLocations = combineArray(
-              locationList.get(i), locationList.get(j));
-          Map2Split split = new Map2Split(combinedSegments,
-                                          combinedLocations);
+          String[][] hosts = new String[segs.length];
+          for (int i = 0; i < segs.length; ++i) {
+              hosts[i] = segLocMap.get(segs[i]);
+          }
+          Map2Split split = new Map2Split(segs, hosts);
           splits.add(split);
         }
       }

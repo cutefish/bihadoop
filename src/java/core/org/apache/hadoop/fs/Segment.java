@@ -2,6 +2,8 @@ package org.apache.hadoop.fs;
 
 import java.net.URI;
 
+import org.apache.hadoop.io.Text;
+
 /**
  * Unique Identity of a contiguous block of data.
  *
@@ -9,7 +11,7 @@ import java.net.URI;
  * Segment.
  *
  */
-public class Segment implements Writable {
+public class Segment implements Writable, Comparable {
   private Path path;
   private long off;
   private long len;
@@ -54,9 +56,10 @@ public class Segment implements Writable {
   }
 
   static boolean isEqual(Object a, Object b) {
-    return a == b || (a != null & a.equals(b));
+    return a == b || (a != null && a.equals(b));
   }
 
+  @Override
   public boolean equals(Object obj) {
       if (this == obj) return true;
       if (obj != null && obj instanceof Segment) {
@@ -68,6 +71,22 @@ public class Segment implements Writable {
       return false;
   }
 
+  @Override
+  public int hashCode() {
+    return path.hashCode() ^ off ^ len;
+  }
+
+  public int compareTo(Object obj) {
+    if (this == obj) return 0;
+    if (obj != null && obj instanceof Segment) {
+      Segment that = (Segment)obj;
+      int ret = this.path.compareTo(that.path);
+      if (ret != 0) return ret;
+      ret = Long.getLong(this.off).compareTo(that.off);
+      if (ret != 0) return ret;
+      return Integer.getInteger(this.len).compareTo(that.len);
+    }
+  }
 
   //////////////////////////////////////////////////
   // Writable

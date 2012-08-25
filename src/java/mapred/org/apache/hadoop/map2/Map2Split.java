@@ -1,5 +1,7 @@
 package org.apache.hadoop.mapred.map2;
 
+import java.util.ArrayList;
+
 import org.apache.hadoop.fs.Segment;
 
 /**
@@ -9,16 +11,18 @@ import org.apache.hadoop.fs.Segment;
  */
 public class Map2Split implements SegmentedSplit {
 
+  //A Map2Split can have multiple segments;
   private Segment[] segs;
-  private String[] hosts;
+  //String[] = hosts[i] represents locations for a segment.
+  private String[][] hosts; 
 
   Map2Split() { }
 
   public Map2Split(Segment[] segs) {
-    Map2Split(segs, (String[])null);
+    Map2Split(segs, (String[][])null);
   }
 
-  public Map2Split(Segment[] segs, String[] hosts) {
+  public Map2Split(Segment[] segs, String[][] hosts) {
     this.segs = segs;
     this.hosts = hosts;
   }
@@ -38,7 +42,13 @@ public class Map2Split implements SegmentedSplit {
       return new String[]{};
     }
     else {
-      return this.hosts;
+      List<String> hostList = ArrayList<String>();
+      for (int i = 0; i < hosts.length; ++i) {
+        for (int j = 0; i < hosts[i].length; ++j) {
+          hostList.add(hosts[i][j]);
+        }
+      }
+      return hostList.toArray(new String[hostList.size()]);
     }
   }
 
@@ -48,6 +58,15 @@ public class Map2Split implements SegmentedSplit {
     }
     else {
       return this.segs;
+    }
+  }
+
+  public String[][] getHosts() throws IOException {
+    if (this.hosts == null) {
+      return new String[][]{ };
+    }
+    else {
+      return this.hosts;
     }
   }
 

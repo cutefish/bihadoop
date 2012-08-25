@@ -33,7 +33,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   //configuration strings
   private static final String SERVER_PORT = "block.cache.server.port";
   private static final String SERVER_NHANDLEER = "block.cache.server.num.handler";
-  private static final String CACHE_CAPACITY = "block.cache.capacity.per.user.fs";
+  private static final String CACHE_CAPACITY = "block.cache.capacity.per.user";
   private static final String LOCAL_DIR = "block.cache.local.dir";
 
   //default values
@@ -63,15 +63,14 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     localCacheDir = conf.getString(LOCAL_DIR, DEFAULT_CACHE_DIR);
     File path = new File(localCacheDir);
     if (path.exists()) {
-      deleteDirFiles(File dir);
+      deleteDirFiles(path);
     }
-    else {
-      LOG.info("Making block cacahe dir at " + localCacheDir);
-      if (!path.mkdir()) {
-        throw new IOException(
-            "Cannot set local cache dir at " + localCacheDir);
-      }
+    LOG.info("Making block cacahe dir at " + localCacheDir);
+    if (!path.mkdir()) {
+      throw new IOException(
+          "Cannot set local cache dir at " + localCacheDir);
     }
+
     cache = new Cache();
     freeStoreThread = new Thread(freeStore);
     freeStoreThread.setDaemon(true);
@@ -87,9 +86,16 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   private void deleteDirFiles(File dir) {
     String[] files = dir.list();
     for (String file : files) {
-      LOG.info("delete file: " + file);
-      (new File(localCacheDir + "/" + file)).delete();
+      File f = new File(dir, file);
+      if (f.isFile()) {
+        LOG.info("delete file: " + file);
+        f.delete();
+      }
+      else {
+        deleteDirFiles(f);
+      }
     }
+    dir.delete();
   }
 
   //No matter what exception we get, keep running
@@ -126,7 +132,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       rpcListener.stop();
     }
     freeStoreThread.join();
-    deleteDirFiles(new Path(localCacheDir));
+    deleteDirFiles(new File(localCacheDir));
   }
 
   /**
@@ -299,31 +305,6 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
         this.capacity = capacity;
       }
 
-      private static int findBlock(List<Block> list, Block key) {
-        Comparator<Block> comp = 
-            new Comparator<Block>() {
-              //Returns 0 iff a is inside b or b is inside a
-              public int compare(Block a, Block b) {
-                long aBeg = a.getStartOffset();
-                long bBeg = b.getStartOffset();
-                long aEnd = aBeg + a.getLength();
-                long bEnd = bBeg + b.getLength();
-                if ((aBeg <= bBeg && bEnd <= aEnd) ||
-                    (bBeg <= aBeg && aEnd <= bEnd))
-                  return 0;
-                if (aBeg < bBeg)
-                  return -1;
-                return 1;
-              }
-            }
-        return Colloections.binarySearch(list, key, comp);
-      }
-
-      private static int getInsertIndex(int binSearchResult) {
-        return binSearchResult >= 0 
-            ?  binSearchResult : -(binSearchResult + 1);
-      }
-
       //We can assume that the segments are non-overlaping becuase
       //this method is being called after a fs block is cached. The fs should
       //have that guarantee.
@@ -331,19 +312,19 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
                                long length, boolean useReplica) {
         if (currSize + length > capacity)
           removeEldestBlocks(length);
-        Block key = new Block(new Segment(path, startOffset, length), 
-                              "", useReplica);
+        Block key = new Block(path, startOffset, length, "", useReplica);
         List<Block> blocks = fileBlockLists.get(path);
         if (blocks == null) {
           blocks = new LinkedList<Block>();
           fileBlockLists.put(path, blocks);
         }
-        int targetIndex = findBlock(blocks, key);
+        //use the natural comparetor
+        int targetIndex = Collections.binarySearch(blocks, key);
         if (targetIndex >= 0) {
           //already there no need to cache
           return false;
         }
-        targetIndex = getInsertIndex(targetIndex);
+        targetIndex = -(targetIndex + 1);
         blocks.add(targetIndex, key);
         blockQueue.addLast(key);
         currSize += length;
@@ -370,7 +351,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
        * Return false if block not in fileBlockLists
        */
       boolean removeFromBlockLists(Path path, long pos) {
-        Block key = new Block(new Segment(path, pos, 1), "", false);
+        Block key = new Block(path, pos, 1, "", false);
         return removeFromBlockLists(path, key);
       }
 
@@ -378,7 +359,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
         List<Block> blocks = fileBlockLists.get(path);
         if (blocks == null) 
           return false;
-        int targetIndex = findBlock(blocks, key);
+        int targetIndex = Collections.binarySearch(blocks, key);
         if (targetIndex < 0) 
           return false;
         blocks.remove(targetIndex);
@@ -386,8 +367,8 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       }
 
       synchronized Block get(Path path, long pos) {
-        Block key = new Block(new Segment(path, pos, 1), "", false);
-        int targetIndex = findBlock(blocks, key);
+        Block key = new Block(path, pos, 1, "", false);
+        int targetIndex = Collections.binarySearch(blocks, key);
         if (targetIndex < 0) return null;
         return fileBlockLists.get(path).get(targetIndex);
       }
@@ -486,15 +467,13 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       return new Block(new Segment(path, -1, -1), "", false);
     BlockLocation loc = info.getLocation(pos);
     //try to see if the block can be local
-    boolean isLocal = false;
     InetSocketAddress bestAddr = NetUtils.createSocketAddr(loc.getName());
-    if (isLocalAddress) isLocal = true;
     long off = loc.getOffset();
     long len = loc.getLength();
     boolean first = cache.put(user, path, off, len, isLocal);
     //if local just return the block
     Block block = cache.get(user, path, off);
-    if (isLocal) return block;
+    if (isLocalAddress(bestAddr)) return block;
     //if not local and we are the first to put it there we are responsible to
     //cache it.
     if (first) {
@@ -578,9 +557,17 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     return local;
   }
 
-  private static String createLocalPath(Block block) {
+  private static String createLocalPath(String user, Block block) 
+      throws IOException {
+    File dir = new File(localCacheDir, user);
+    if (!dir.exists()) {
+      if (!dir.mkdir()) {
+        throw new IOException("cannot create directory: " + 
+                              dir.toString());
+      }
+    }
     String name = block.toString().replace('/', '#');
-    return localCacheDir + "/" + name;
+    return localCacheDir + "/" + user + "/" + name;
   }
 
   public Segments getCachedBlocks(String user) throws IOException {

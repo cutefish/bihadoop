@@ -4,35 +4,23 @@ import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.fs.Path;
 
 /**
- * Block Information for the protocol
+ * Block Information for the protocol, adding extra information to the segment.
  */
-public class Block implements Writable {
-  private Segment seg;
+public class Block extends Segment implements Writable {
   boolean useReplica;
   String localPath;
 
   public Block() {
-    seg = null;
+    super();
     useReplica = false;
     localPath = null;
   }
 
-  public Block(Segment seg, boolean useReplica, String localPath) {
-    this.seg = seg;
+  public Block(Path path, long len, long off, 
+               boolean useReplica, String localPath) {
+    super(path, len, off);
     this.useReplica = useReplica;
     this.localPath = localPath;
-  }
-
-  public Path getPath() {
-    return seg.getPath();
-  }
-
-  public long getStartOffset() {
-    return seg.getOffset();
-  }
-
-  public long getBlockLength() {
-    return seg.getLength();
   }
 
   public boolean shouldUseReplica() {
@@ -48,11 +36,11 @@ public class Block implements Writable {
   }
 
   public Segment getSegment() {
-    return seg;
+    return super;
   }
 
   public String toString() {
-    return seg.toString();
+    return super.toString();
   }
 
   //////////////////////////////////////////////////
@@ -67,13 +55,13 @@ public class Block implements Writable {
   }
 
   public void write(DataOutput out) throws IOException {
-    seg.write(out);
+    super.write(out);
     out.writeBoolean(useReplica);
     Text.writeString(out, localPath);
   }
 
   public void readFields(DataInput in) throws IOException {
-    seg.readFields(in);
+    super.readFields(in);
     useReplica = in.readBoolean();
     localPath = Text.readString(in);
   }

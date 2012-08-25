@@ -13,67 +13,82 @@ import java.util.NoSuchElementException;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.core.Configuration;
 
-/* MapTaskPacker.java
+import org.apache.hadoop.fs.Segment;
+import org.apache.hadoop.fs.SegmentUtils;
+
+/** 
  * Handles packing of map tasks.
+ *
+ * The goal of packing is to minimize the footprint(size of segment set) for
+ * each pack of task. Further, the locality of segments between tasks and jobs
+ * are considered. This results into a two-step scheduling: a static grouping
+ * according to the sets of segments among tasks; and a dynamic packing
+ * considering locality. The scheduling heuristic makes an assumption that the
+ * overlap patterns between segments are regular. That is to say, segments 
+ * either have an inclusion relationship or have no overlap at all.
  */
-
 public class MapTaskPacker {
 
   private static final Log LOG = LogFactory.getLog(MapTaskPacker.class);
 
+  private Configuration conf;
   private static final float ACCEPT_OVERLAP_RATIO = 0.8f;
   private int totalNumMaps = 0;
   private int clusterSize = 0;
   private int maxPackSize = 0;
-  private Map<Integer, HashSet<IndexedSplit>> groups;
-  private Map<IndexedSplit, Integer> groupCache;
-  private Map<IndexedSplit, TreeSet<IndexedSplit>> joinTable;
+  private LinkedList<LinkedList<Segment>> groups;
+  private Map<Segment, TreeSet<Segment>> joinTable;
+
+  public MapTaskPacker(Configuration conf) {
+    this.conf = conf;
+  }
 
   /**
-   * Pack of tasks(IndexedSplit pairs)
+   * Pack of tasks(Segment pairs)
    */
   public static class Pack {
-    private Map<IndexedSplit, TreeSet<IndexedSplit>> packMap;
-    private IndexedSplit current = null;
+    private Map<Segment, TreeSet<Segment>> packMap;
+    private Segment current = null;
 
     public Pack() {
-      this.packMap = new HashMap<IndexedSplit, TreeSet<IndexedSplit>>();
+      this.packMap = new HashMap<Segment, TreeSet<Segment>>();
     }
 
-    public TreeSet<IndexedSplit> get(IndexedSplit split) {
-      return packMap.get(split);
+    public TreeSet<Segment> get(Segment seg) {
+      return packMap.get(seg);
     }
 
-    public void put(IndexedSplit split, TreeSet<IndexedSplit> set) {
-      packMap.put(split, set);
+    public void put(Segment seg, TreeSet<Segment> set) {
+      packMap.put(seg, set);
     }
 
-    public void remove(IndexedSplit split) {
-      packMap.remove(split);
+    public void remove(Segment seg) {
+      packMap.remove(seg);
     }
 
     //possibly adding duplicates: a->b and b->a
-    public void addPair(IndexedSplit split0, IndexedSplit split1) {
-      TreeSet<IndexedSplit> set = packMap.get(split0);
+    public void addPair(Segment seg0, Segment seg1) {
+      TreeSet<IndexedSplit> set = packMap.get(seg0);
       if (set == null) {
         set = new TreeSet<IndexedSplit>();
-        packMap.put(split0, set);
+        packMap.put(seg0, set);
       }
-      set.add(split1);
+      set.add(seg1);
     }
 
     //responsible to also remove duplicates
-    public void removePair(IndexedSplit split0, IndexedSplit split1) {
-      TreeSet<IndexedSplit> set = packMap.get(split0);
+    public void removePair(Segment seg0, Segment seg1) {
+      TreeSet<IndexedSplit> set = packMap.get(seg0);
       if (set != null) {
-        set.remove(split1);
-        if (set.isEmpty()) packMap.remove(split0);
+        set.remove(seg1);
+        if (set.isEmpty()) packMap.remove(seg0);
       }
-      set = packMap.get(split1);
+      set = packMap.get(seg1);
       if (set != null) {
-        set.remove(split0);
-        if (set.isEmpty()) packMap.remove(split1);
+        set.remove(seg0);
+        if (set.isEmpty()) packMap.remove(seg1);
       }
     }
 
@@ -89,7 +104,7 @@ public class MapTaskPacker {
       return packMap.keySet();
     }
 
-    public IndexedSplit[] getNext() {
+    public Segment[] getNext() {
       if ((packMap == null) || (packMap.isEmpty())) {
         return null;
       }
@@ -104,24 +119,24 @@ public class MapTaskPacker {
         current = packMap.keySet().iterator().next();
         set = packMap.get(current);
       }
-      IndexedSplit joinSplit = set.first();
-      IndexedSplit[] nextSplits = new IndexedSplit[2];
-      nextSplits[0] = current;
-      nextSplits[1] = joinSplit;
-      removePair(current, joinSplit);
-      return nextSplits;
+      Segment joinSegment = set.first();
+      Segment[] nextSplit = new Segment[2];
+      nextSplit[0] = current;
+      nextSplit[1] = joinSegment;
+      removePair(current, joinSegment);
+      return nextSplit;
     }
 
     public String toString() {
       StringBuilder ret = new StringBuilder();
-      for (Iterator<Map.Entry<IndexedSplit, TreeSet<IndexedSplit>>>
+      for (Iterator<Map.Entry<Segment, TreeSet<Segment>>>
            I = packMap.entrySet().iterator(); I.hasNext();) {
-        Map.Entry<IndexedSplit, TreeSet<IndexedSplit>> entry = I.next();
-        IndexedSplit split0 = entry.getKey();
-        ret.append(split0.getIndex() + " [");
-        TreeSet<IndexedSplit> joinSet = entry.getValue();
-        for (IndexedSplit split1 : joinSet) {
-          ret.append(split1.getIndex() + ", ");
+        Map.Entry<Segment, TreeSet<Segment>> entry = I.next();
+        Segment seg0 = entry.getKey();
+        ret.append(seg0.toString() + " [");
+        TreeSet<Segment> joinSet = entry.getValue();
+        for (Segment seg1 : joinSet) {
+          ret.append(seg1.toString() + ", ");
         }
         ret.append("]\n");
       }
@@ -130,19 +145,17 @@ public class MapTaskPacker {
   }
 
   /**
-   * Initialize MapTaskPacker from a list of IndexedSplit[2].
+   * Initialize MapTaskPacker from a list of Segment[2].
    *
-   * Splits are not ordered, that is, we do not distinguish 
-   * split[0] and split[1]
-   *
-   * @param splitList List of joined splits.
+   * Segments in each split are not ordered, that is, we do not distinguish 
+   * segment[0] and segment[1]
    */
-  public void init(List<IndexedSplit[]> splitList, int clusterSize) {
+  public void init(List<Segment[]> segList, int clusterSize) {
 
     long start = System.currentTimeMillis();
 
     this.clusterSize = clusterSize;
-    initJoinTable(splitList);
+    initJoinTable(segList);
     initGroups();
     maxPackSize = totalNumMaps / clusterSize + 
         ((totalNumMaps % clusterSize == 0) ? 0 : 1);
@@ -153,18 +166,23 @@ public class MapTaskPacker {
     LOG.info("Finished initializing for job in " + (end - start) + " ms.");
   }
 
-  private void initJoinTable(List<IndexedSplit[]> splitList) {
-    joinTable = new HashMap<IndexedSplit, TreeSet<IndexedSplit>>();
+  /**
+   * Initialize the joinTable.
+   *
+   * JoinTable is a table to describe the join set of every segment.
+   */
+  private void initJoinTable(List<Segment[]> segList) {
+    joinTable = new HashMap<Segment, TreeSet<Segment>>();
 
     //add each pair to two sets.
-    for (IndexedSplit[] splitPair : splitList) {
+    for (Segment[] pair : segList) {
       for (int i = 0; i < 2; ++i) {
-        TreeSet<IndexedSplit> set = joinTable.get(splitPair[i]);
+        TreeSet<Segment> set = joinTable.get(pair[i]);
         if (set == null) {
           set = new TreeSet<IndexedSplit>();
-          joinTable.put(splitPair[i], set);
+          joinTable.put(pair[i], set);
         }
-        set.add(splitPair[1 - i]);
+        set.add(pair[1 - i]);
         totalNumMaps ++;
       }
     }
@@ -173,32 +191,38 @@ public class MapTaskPacker {
     LOG.info("Total Number of Tasks: " + totalNumMaps);
   }
 
+  /**
+   * Initialize the group from joinTable.
+   *
+   * This method statically groups the Segments so that inside each group
+   * the size of segment set for each map2split is small. A dynamic packing
+   * strategy will be applied to each group according to the cache status of
+   * each node.
+   */
   private void initGroups() {
-    groups = new HashMap<Integer, HashSet<IndexedSplit>>();
-    groupCache = new HashMap<IndexedSplit, Integer>();
+    groups = new LinkedList<LinkedList<Segment>>();
 
     //keep a cache for the largest set in a group
-    Map<Integer, TreeSet<IndexedSplit>> largestCache = 
-        new HashMap<Integer, TreeSet<IndexedSplit>>();
+    Map<Integer, TreeSet<Segment>> largestCache = 
+        new HashMap<Integer, TreeSet<Segment>>();
 
     //foreach in the joinTable
-    for (Iterator<Map.Entry<IndexedSplit, TreeSet<IndexedSplit>>> 
+    for (Iterator<Map.Entry<Segment, TreeSet<Segment>>> 
         I = joinTable.entrySet().iterator(); I.hasNext();) {
-      Map.Entry<IndexedSplit, TreeSet<IndexedSplit>> entry = I.next();
-      IndexedSplit split = entry.getKey();
-      TreeSet<IndexedSplit> splitJoinSet = entry.getValue();
+      Map.Entry<Segment, TreeSet<Segment>> entry = I.next();
+      Segment seg = entry.getKey();
+      TreeSet<Segment> segJoinSet = entry.getValue();
 
       boolean groupFound = false;
       //foreach in the group list
       for (int i = 0; i < groups.size(); ++i) {
-        TreeSet<IndexedSplit> largest = largestCache.get(i);
+        TreeSet<Segment> largest = largestCache.get(i);
         assert (largest != null) : ("Largest entry not constructed");
-        if (shouldContain(largest, splitJoinSet)) {
+        if (shouldContain(largest, segJoinSet)) {
           groups.get(i).add(split);
-          groupCache.put(split, i);
           //update largest cache
-          if (splitJoinSet.size() > largest.size()) {
-            largestCache.put(i, splitJoinSet);
+          if (segJoinSet.size() > largest.size()) {
+            largestCache.put(i, segJoinSet);
           }
           groupFound = true;
           break;
@@ -208,18 +232,22 @@ public class MapTaskPacker {
       if (groupFound) continue;
 
       //no group contains this entry
-      HashSet<IndexedSplit> newGroup = new HashSet<IndexedSplit>();
-      newGroup.add(split);
-      groups.put(groups.size(), newGroup);
-      largestCache.put(groups.size() - 1, splitJoinSet);
-      groupCache.put(split, groups.size() - 1);
+      LinkedList<Segment> newGroup = new LinkedList<Segment>();
+      newGroup.add(seg);
+      groups.add(newGroup);
+      largestCache.put(groups.size() - 1, segJoinSet);
     } 
+
+    //sort each group for future search
+    for (LinkedList<Segment> group : groups) {
+      Collections.sort(group);
+    }
   }
 
-  private boolean shouldContain(Set<IndexedSplit> first,
-                                Set<IndexedSplit> second) {
-    Set<IndexedSplit> smaller;
-    Set<IndexedSplit> larger;
+  private boolean shouldContain(Set<Segment> first,
+                                Set<Segment> second) {
+    Set<Segment> smaller;
+    Set<Segment> larger;
     if (first.size() < second.size()) {
       smaller = first;
       larger = second;
@@ -240,15 +268,15 @@ public class MapTaskPacker {
   //for debug
   public String joinTableToString() {
     StringBuilder ret = new StringBuilder();
-    for (Iterator<Map.Entry<IndexedSplit, TreeSet<IndexedSplit>>>
+    for (Iterator<Map.Entry<Segment, TreeSet<Segment>>>
          I = joinTable.entrySet().iterator(); I.hasNext();) {
-      Map.Entry<IndexedSplit, TreeSet<IndexedSplit>> entry = I.next();
-      IndexedSplit split0 = entry.getKey();
-      ret.append(split0.getIndex() + " [");
-      TreeSet<IndexedSplit> joinSet = entry.getValue();
+      Map.Entry<Segment, TreeSet<Segment>> entry = I.next();
+      Segment seg0 = entry.getKey();
+      ret.append(seg0.toString() + " [");
+      TreeSet<Segment> joinSet = entry.getValue();
       ret.append(joinSet.size() + ": ");
-      for (IndexedSplit split1 : joinSet) {
-        ret.append(split1.getIndex() + ", ");
+      for (Segment seg1 : joinSet) {
+        ret.append(seg1.toString() + ", ");
       }
       ret.append("]\n");
     }
@@ -261,12 +289,12 @@ public class MapTaskPacker {
     ret.append("groupNo " + groups.size() + '\n');
     for (int i : groups.keySet()) {
       ret.append("group " + i + '\n');
-      HashSet<IndexedSplit> group = groups.get(i);
-      for (IndexedSplit split0 : group) {
-        ret.append(split0.getIndex() + " [");
-        ret.append(joinTable.get(split0).size() + ": ");
-        for (IndexedSplit split1 : joinTable.get(split0)) {
-          ret.append(split1.getIndex() + ", ");
+      List<Segment> group = groups.get(i);
+      for (Segment seg0 : group) {
+        ret.append(seg0.toString() + " [");
+        ret.append(joinTable.get(seg0).size() + ": ");
+        for (Segment seg1 : joinTable.get(seg0)) {
+          ret.append(seg1.toString() + ", ");
         }
         ret.append(" ]\n");
       }
@@ -282,7 +310,7 @@ public class MapTaskPacker {
   /**
    * Obtain last level pack
    *
-   * For disk level cache, obtained directly from groups.
+   * For disk level cache, obtained directly from groups. 
    *
    * @param staticCache static cache of splits on the node.
    * @param dynamicCache dynamic cache of splits on the node.
@@ -293,8 +321,8 @@ public class MapTaskPacker {
    * hurt. The assumptions are that this function should be called not very
    * frequently and the cache size are not so large.
    */
-  public synchronized Pack obtainLastLevelPack(Set<IndexedSplit> staticCache, 
-                                               Set<IndexedSplit> dynamicCache, 
+  public synchronized Pack obtainLastLevelPack(List<Segment> staticCache, 
+                                               List<Segment> dynamicCache, 
                                                long cacheSize) {
     long start = System.currentTimeMillis();
 
@@ -304,27 +332,28 @@ public class MapTaskPacker {
 
     //pack from the group with most local splits
     //select tasks from the largest join set.
-    LOG.info("Choosing suitable join set");
-
-    HashSet<IndexedSplit> cache = new HashSet<IndexedSplit>();
-    cache.addAll(staticCache);
-    cache.addAll(dynamicCache);
-    int bestGroupIndex = chooseBestGroup(cache);
+    Collections.sort(staticCache);
+    Collections.sort(dynamicCache);
+    List<Segment> cache = sortedMerge(staticCache, dynamicCache);
+    int bestGroupIndex = chooseGroup(cache);
     if (bestGroupIndex == -1) return null;
-    IndexedSplit chosenSplit = chooseLargestSet(bestGroupIndex, cache);
+    Segment chosenSegment = getLeftMostSegment(bestGroupIndex, cache);
 
     //find a join set
     int numPackedTasks = 0;
     long sizeLeft;
     boolean finished = false;
     Pack newPack = new Pack();
-    Set<IndexedSplit> newDynamicCache = new HashSet<IndexedSplit>();
-    // use half of the cache for the join set.
-    sizeLeft = cacheSize / 2;
-    TreeSet<IndexedSplit> tmp = joinTable.get(chosenSplit);
-    TreeSet<IndexedSplit> chosenSet = new TreeSet<IndexedSplit>();
-    for(IndexedSplit split : tmp) {
-      chosenSet.add(split);
+    Set<Segment> newDynamicCache = new HashSet<Segment>();
+    // use a portion of the cache for the join set.
+    float overCacheFactor = 
+        conf.getFloat("mapred.map2.taskPacker.overCacheFactor", 0.8);
+    long usableCacheSize = cacheSize * overCacheFactor;
+    sizeLeft = usableCacheSize / 2;
+    TreeSet<Segment> tmp = joinTable.get(chosenSplit);
+    TreeSet<Segment> chosenSet = new TreeSet<Segment>();
+    for(Segment seg : tmp) {
+      chosenSet.add(seg);
       if (!staticCache.contains(split)) {
         newDynamicCache.add(split);
         sizeLeft -= split.size();
@@ -333,7 +362,7 @@ public class MapTaskPacker {
     }
 
     //start packing
-    sizeLeft += cacheSize / 2;
+    sizeLeft += usableCacheSize / 2;
     List<IndexedSplit[]> deleteList = new ArrayList<IndexedSplit[]>();
 
     LOG.info("Start packing");
@@ -442,7 +471,39 @@ public class MapTaskPacker {
     return newPack;
   }
 
-  private int chooseBestGroup(Set<IndexedSplit> cache) {
+  private List<Segment> sortedMerge(List<Segment> seg0,
+                                    List<Segment> seg1) {
+    List<Segment> ret = new LinkedList<Segment>();
+    int idx0 = 0, idx1 = 0;
+    int num = 0;
+    while (idx0 < seg0.size() &&
+           idx1 < seg1.size()) {
+      if (seg0.get(idx0).compareTo(seg1.get(idx1)) <= 0) {
+        ret.add(seg0.get(idx0));
+        idx0 ++;
+      }
+      else {
+        ret.add(seg1.get(idx1));
+        idx1 ++;
+      }
+      num ++;
+    }
+
+    if (idx0 == seg0.size()) {
+      ret.addAll(seg1.subList(idx1, seg1.size()));
+    }
+    else {
+      ret.addAll(seg0.subList(idx0, seg0.size()));
+    }
+    return ret;
+  }
+
+  /**
+   * Compare cache with group indices to choose a group.
+   *
+   * Halt when selects a group of 0.8 match or the best.
+   */
+  private int chooseGroup(List<Segment> cache) {
     if ((groupCache == null) || (groupCache.isEmpty())) return -1;
 
     Map<Integer, Integer> groupForlocals = new HashMap<Integer, Integer>();
@@ -480,8 +541,8 @@ public class MapTaskPacker {
   }
   
   //choose the largest join set in a group
-  private IndexedSplit chooseLargestSet(int groupIndex, 
-                                        Set<IndexedSplit> cache) {
+  private Segment getLeftMostSegment(int groupIndex, 
+                                     Set<IndexedSplit> cache) {
     int largest = 0;
     IndexedSplit chosenSplit = null;
     HashSet<IndexedSplit> group = groups.get(groupIndex);
@@ -504,6 +565,46 @@ public class MapTaskPacker {
       chosenSplit = group.iterator().next();
     }
     return chosenSplit;
+  }
+
+  private static long getSegListSize(List<Segment> list) {
+    long size = 0;
+    for (Segment seg : list) {
+      size += seg.getLength();
+    }
+    return size;
+  }
+
+  /**
+   * Get the length of contingous data that is common to both list.
+   *
+   * Assumption:
+   * (1) both lists are sorted.
+   * (2) segments in each list have minimum overlap.
+   */
+  private static long getCommonLength(List<Segment> list0,
+                                      List<Segment> list1) {
+    List<Segment> smaller, larger;
+    if (list0.size() < list1.size()) {
+      smaller = list0;
+      larger = list1;
+    }
+    else {
+      smaller = list1;
+      larger = list0;
+    }
+
+    int curr = 0;
+    for (int i = 0; i < smaller.size(); ++i) {
+      //search the position of elements from list0 in list1
+      int idx = Collections.binarySearch(larger, smaller.get(i));
+      curr = (idx >= 0) ? idx : -(idx + 1);
+      while(true) {
+      }
+    }
+  }
+
+  private static boolean containsSegment(List<Segment> list, Segment key) {
   }
 
   /**
