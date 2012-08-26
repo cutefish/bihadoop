@@ -11,7 +11,7 @@ import org.apache.hadoop.io.Text;
  * Segment.
  *
  */
-public class Segment implements Writable, Comparable {
+public class Segment implements Writable, Comparable<Segment> {
   private Path path;
   private long off;
   private long len;
@@ -76,16 +76,14 @@ public class Segment implements Writable, Comparable {
     return path.hashCode() ^ off ^ len;
   }
 
-  public int compareTo(Object obj) {
-    if (this == obj) return 0;
-    if (obj != null && obj instanceof Segment) {
-      Segment that = (Segment)obj;
-      int ret = this.path.compareTo(that.path);
-      if (ret != 0) return ret;
-      ret = Long.getLong(this.off).compareTo(that.off);
-      if (ret != 0) return ret;
-      return Integer.getInteger(this.len).compareTo(that.len);
-    }
+  @Override
+  public int compareTo(Segment that) {
+    if (this == that) return 0;
+    int ret = this.path.compareTo(that.path);
+    if (ret != 0) return ret;
+    ret = Long.getLong(this.off).compareTo(that.off);
+    if (ret != 0) return ret;
+    return Long.getLong(this.len).compareTo(that.len);
   }
 
   //////////////////////////////////////////////////

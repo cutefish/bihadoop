@@ -38,7 +38,7 @@ public class MapTaskPacker {
   private int totalNumMaps = 0;
   private int clusterSize = 0;
   private int maxPackSize = 0;
-  private LinkedList<LinkedList<Segment>> groups;
+  private List<List<Segment>> groups;
   private Map<Segment, TreeSet<Segment>> joinTable;
 
   public MapTaskPacker(Configuration conf) {
@@ -179,7 +179,7 @@ public class MapTaskPacker {
       for (int i = 0; i < 2; ++i) {
         TreeSet<Segment> set = joinTable.get(pair[i]);
         if (set == null) {
-          set = new TreeSet<IndexedSplit>();
+          set = new TreeSet<Segment>();
           joinTable.put(pair[i], set);
         }
         set.add(pair[1 - i]);
@@ -194,13 +194,13 @@ public class MapTaskPacker {
   /**
    * Initialize the group from joinTable.
    *
-   * This method statically groups the Segments so that inside each group
-   * the size of segment set for each map2split is small. A dynamic packing
-   * strategy will be applied to each group according to the cache status of
-   * each node.
+   * This method statically groups the Segments so that when fetching Map2Splits
+   * from one group, the corresponding size of segment set will be small. A
+   * dynamic packing strategy will be applied to each group according to the
+   * cache status of each node.
    */
   private void initGroups() {
-    groups = new LinkedList<LinkedList<Segment>>();
+    groups = new ArrayList<ArrayList<Segment>>();
 
     //keep a cache for the largest set in a group
     Map<Integer, TreeSet<Segment>> largestCache = 
@@ -219,7 +219,7 @@ public class MapTaskPacker {
         TreeSet<Segment> largest = largestCache.get(i);
         assert (largest != null) : ("Largest entry not constructed");
         if (shouldContain(largest, segJoinSet)) {
-          groups.get(i).add(split);
+          groups.get(i).add(seg);
           //update largest cache
           if (segJoinSet.size() > largest.size()) {
             largestCache.put(i, segJoinSet);
@@ -232,14 +232,14 @@ public class MapTaskPacker {
       if (groupFound) continue;
 
       //no group contains this entry
-      LinkedList<Segment> newGroup = new LinkedList<Segment>();
+      ArrayList<Segment> newGroup = new ArrayList<Segment>();
       newGroup.add(seg);
       groups.add(newGroup);
       largestCache.put(groups.size() - 1, segJoinSet);
     } 
 
     //sort each group for future search
-    for (LinkedList<Segment> group : groups) {
+    for (List<Segment> group : groups) {
       Collections.sort(group);
     }
   }

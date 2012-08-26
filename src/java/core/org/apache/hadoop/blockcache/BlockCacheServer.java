@@ -146,7 +146,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     PathInfo(FileSystem fs, Path path) {
       status = fs.getFileStatus(path);
       in = fs.open(path);
-      blocks = new LinkedList<BlockLocation>(
+      blocks = new ArrayList<BlockLocation>(
           Arrays.asList(
               fs.getFileBlockLocations(status, 0, PREFETCH_SIZE)));
     }
@@ -157,7 +157,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       if (index >= 0) return blocks.get(0);
       //cache with prefetch
       index = -(index + 1);
-      List<BlockLocation> newBlocks = new LinkedList<BlockLocation>(
+      List<BlockLocation> newBlocks = new ArrayList<BlockLocation>(
           Arrays.asList(
               fs.getFileBlockLocations(status, off, PREFETCH_SIZE)));
       int oldIdx = index;
