@@ -16,7 +16,8 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.core.Configuration;
 
 import org.apache.hadoop.fs.Segment;
-import org.apache.hadoop.fs.SegmentUtils;
+import org.apache.hadoop.fs.Segments;
+import org.apache.hadoop.fs.Segments.CoverInfo;
 
 /** 
  * Handles packing of map tasks.
@@ -321,8 +322,8 @@ public class MapTaskPacker {
    * hurt. The assumptions are that this function should be called not very
    * frequently and the cache size are not so large.
    */
-  public synchronized Pack obtainLastLevelPack(List<Segment> staticCache, 
-                                               List<Segment> dynamicCache, 
+  public synchronized Pack obtainLastLevelPack(Segments staticCache, 
+                                               Segments dynamicCache, 
                                                long cacheSize) {
     long start = System.currentTimeMillis();
 
@@ -332,40 +333,80 @@ public class MapTaskPacker {
 
     //pack from the group with most local splits
     //select tasks from the largest join set.
-    Collections.sort(staticCache);
-    Collections.sort(dynamicCache);
-    List<Segment> cache = sortedMerge(staticCache, dynamicCache);
-    int bestGroupIndex = chooseGroup(cache);
-    if (bestGroupIndex == -1) return null;
-    Segment chosenSegment = getLeftMostSegment(bestGroupIndex, cache);
+    Segments cache = new Segments(staticCache);
+    cache.add(dynamicCache);
+    List<CoverInfo> bestGroup = chooseGroup(cache, cacheSize);
+    if (bestGroup == null) return null;
+    Set<Segment> largestSet = getLargestSet(bestGroup, cacheSize);
 
-    //find a join set
+    //actuall form the join set
     int numPackedTasks = 0;
     long sizeLeft;
     boolean finished = false;
     Pack newPack = new Pack();
-    Set<Segment> newDynamicCache = new HashSet<Segment>();
+    Set<Segment> chosenSegment = new HashSet<Segment>();
     // use a portion of the cache for the join set.
     float overCacheFactor = 
         conf.getFloat("mapred.map2.taskPacker.overCacheFactor", 0.8);
     long usableCacheSize = cacheSize * overCacheFactor;
     sizeLeft = usableCacheSize / 2;
-    TreeSet<Segment> tmp = joinTable.get(chosenSplit);
-    TreeSet<Segment> chosenSet = new TreeSet<Segment>();
-    for(Segment seg : tmp) {
+    Set<Segment> chosenSet = new TreeSet<Segment>();
+    for(Segment seg : largestSet) {
       chosenSet.add(seg);
-      if (!staticCache.contains(split)) {
-        newDynamicCache.add(split);
-        sizeLeft -= split.size();
-        if(sizeLeft < 0) break;
-      }
+      CoverInfo info = staticCache.cover(seg);
+      sizeLeft -= info.leftSize;
+      chosenSegment.add(seg);
+      if (sizeLeft < 0) break;
     }
 
     //start packing
     sizeLeft += usableCacheSize / 2;
-    List<IndexedSplit[]> deleteList = new ArrayList<IndexedSplit[]>();
+    List<Segment[]> deleteList = new ArrayList<Segment[]>();
 
     LOG.info("Start packing");
+    //since the cover info in bestGroup is already ordered according to the
+    //locality, we can simply pop them out.
+    for (CoverInfo info : bestGroup) {
+      //we need to know the if static cache can cover this segment
+      CoverInfo staticInfo = staticCache.cover(info.segment);
+
+      Set<Segment> join = joinTable.get(info.segment);
+      if (join == null) continue;
+
+      int count = 0;
+      for (Segment seg : chosenSet) {
+        if (join.contains(seg)) {
+          newPack.addPair(info.segment, seg);
+          Segment[] toDelete = new Segment[2];
+          toDelete[0] = info.segment;
+          toDelete[1] = seg;
+          deleteList.add(toDelete);
+          numPackedTasks ++;
+          count ++;
+          if (numPackedTasks >= maxPackSize) {
+            LOG.debug("Reached pack size: local packing");
+            finished = true;
+            break;
+          }
+        }
+      }
+
+      if (count != 0) {
+        //at least one join split is chosen
+        if (!chosenSegments.contains(info.segment)) {
+          chosenSegments.add(info.segment);
+          sizeLeft -= staticInfo.leftSize;
+        }
+      }
+
+      if (finished == true) break;
+    }
+
+    removePairs(deleteList);
+    long end = System.currentTimeMillis();
+    LOG.debug("Finished last level packing in " + (end - start) + " ms " );
+    return newPack;
+
     // obtain local tasks first
     for (IndexedSplit local : cache) {
       //only splits in the old dynamic cache will increase the size, 
@@ -471,140 +512,56 @@ public class MapTaskPacker {
     return newPack;
   }
 
-  private List<Segment> sortedMerge(List<Segment> seg0,
-                                    List<Segment> seg1) {
-    List<Segment> ret = new LinkedList<Segment>();
-    int idx0 = 0, idx1 = 0;
-    int num = 0;
-    while (idx0 < seg0.size() &&
-           idx1 < seg1.size()) {
-      if (seg0.get(idx0).compareTo(seg1.get(idx1)) <= 0) {
-        ret.add(seg0.get(idx0));
-        idx0 ++;
-      }
-      else {
-        ret.add(seg1.get(idx1));
-        idx1 ++;
-      }
-      num ++;
-    }
-
-    if (idx0 == seg0.size()) {
-      ret.addAll(seg1.subList(idx1, seg1.size()));
-    }
-    else {
-      ret.addAll(seg0.subList(idx0, seg0.size()));
-    }
-    return ret;
-  }
-
   /**
-   * Compare cache with group indices to choose a group.
-   *
-   * Halt when selects a group of 0.8 match or the best.
+   * Try to cover each group with cache. 
+   * 
+   * Find the group with most segments within the required size.
    */
-  private int chooseGroup(List<Segment> cache) {
-    if ((groupCache == null) || (groupCache.isEmpty())) return -1;
+  private List<CoverInfo> chooseGroup(Segments cache, long size) {
+    if (groups == null || groups.isEmpty()) return null;
 
-    Map<Integer, Integer> groupForlocals = new HashMap<Integer, Integer>();
+    List<List<CoverInfo>> allCoverInfo = new ArrayList<List<CoverInfo>>();
 
-    for (IndexedSplit split : cache) {
-      Integer groupIndex = groupCache.get(split);
-      if (groupIndex == null) continue;
-      Integer frequency = groupForlocals.get(groupIndex);
-      if (frequency == null) {
-        groupForlocals.put(groupIndex, 1);
-      }
-      else {
-        groupForlocals.put(groupIndex, frequency + 1);
-      }
-    }
-    
-    int bestGroupIndex = -1;
-    int largest = 0;
-    for (Map.Entry<Integer, Integer> entry : groupForlocals.entrySet()) {
-      if (entry.getValue() > largest) {
-        bestGroupIndex = entry.getKey();
-        largest = entry.getValue();
-      }
+    for (List<Segment> group : groups) {
+      List<CoverInfo> info = cache.cover(group);
+      allCoverInfo.add(info);
     }
 
-    //local is in none of the group
-    //just pick a group
-    if (bestGroupIndex == -1) {
-      if ((groups != null) && (!groups.isEmpty())) {
-        bestGroupIndex = groups.keySet().iterator().next();
+    int maxNum = 0;
+    List<CoverInfo> optGroup = null;
+    for (List<CoverInfo> groupInfo : allCoverInfo) {
+      int num = 0;
+      long left = size;
+      for (CoverInfo info : groupInfo) {
+        left -= info.leftSize;
+        num ++;
+        if (left < 0) break;
+      }
+      if (num > maxNum) {
+        maxNum = num;
+        optGroup = groupInfo;
       }
     }
 
-    return bestGroupIndex;
+    return optGroup;
   }
   
   //choose the largest join set in a group
-  private Segment getLeftMostSegment(int groupIndex, 
-                                     Set<IndexedSplit> cache) {
+  private Set<Segment> getLargestSet(List<CoverInfo> group, long size) {
     int largest = 0;
-    IndexedSplit chosenSplit = null;
-    HashSet<IndexedSplit> group = groups.get(groupIndex);
-    if (group == null) {
-      LOG.info("no group: " + groupIndex);
-      LOG.info(groupsToString());
-    }
-    for (IndexedSplit split : cache) {
-      if (group.contains(split)) {
-        if (joinTable.get(split).size() > largest) {
-          largest = joinTable.get(split).size();
-          chosenSplit = split;
-        }
+    Set<Segment> chosenSet = null;
+    int idx = 0;
+    long left = size;
+    while((left > 0) && (idx < group.size())) {
+      CoverInfo info = group.get(idx);
+      left -= info.leftSize;
+      Set<Segment> currSet = joinTable.get(info.segment);
+      if (currSet.size() > largest) {
+        largest = currSet.size();
+        chosenSet = currSet;
       }
     }
-
-    //this happens when no local is in a group
-    //choose any split
-    if (chosenSplit == null) {
-      chosenSplit = group.iterator().next();
-    }
-    return chosenSplit;
-  }
-
-  private static long getSegListSize(List<Segment> list) {
-    long size = 0;
-    for (Segment seg : list) {
-      size += seg.getLength();
-    }
-    return size;
-  }
-
-  /**
-   * Get the length of contingous data that is common to both list.
-   *
-   * Assumption:
-   * (1) both lists are sorted.
-   * (2) segments in each list have minimum overlap.
-   */
-  private static long getCommonLength(List<Segment> list0,
-                                      List<Segment> list1) {
-    List<Segment> smaller, larger;
-    if (list0.size() < list1.size()) {
-      smaller = list0;
-      larger = list1;
-    }
-    else {
-      smaller = list1;
-      larger = list0;
-    }
-
-    int curr = 0;
-    for (int i = 0; i < smaller.size(); ++i) {
-      //search the position of elements from list0 in list1
-      int idx = Collections.binarySearch(larger, smaller.get(i));
-      curr = (idx >= 0) ? idx : -(idx + 1);
-      while(true) {
-      }
-    }
-  }
-
-  private static boolean containsSegment(List<Segment> list, Segment key) {
+    return chosenSet;
   }
 
   /**

@@ -22,6 +22,15 @@ public class Segments implements Writable {
     Collections.sort(thisList);
   }
 
+  public Segments(Segments s) {
+    thisList = new ArrayList<Segment>(s.thisList);
+  }
+
+  public void add(Segments s) {
+    thisList.addAll(s.thisList);
+    Collections.sort(thisList);
+  }
+
   public List<Segment> getList() {
     return thisList;
   }
@@ -50,6 +59,10 @@ public class Segments implements Writable {
       sb.append(segment.toString() + ", " + leftSize);
       return sb.toString();
     }
+  }
+
+  public CoverInfo cover(Segment key) {
+    return cover(0, thisList.size() - 1, key);
   }
 
   /**
