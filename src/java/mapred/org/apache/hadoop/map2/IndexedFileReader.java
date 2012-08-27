@@ -1,4 +1,4 @@
-package org.apache.hadoop.mapred.map2;
+package org.apache.hadoop.map2;
 
 import java.util.ArrayList;
 import java.util.List;

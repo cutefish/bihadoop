@@ -1,4 +1,4 @@
-package org.apache.hadoop.mapred.map2;
+package org.apache.hadoop.map2;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -71,9 +71,9 @@ public class MapTaskPacker {
 
     //possibly adding duplicates: a->b and b->a
     public void addPair(Segment seg0, Segment seg1) {
-      TreeSet<IndexedSplit> set = packMap.get(seg0);
+      TreeSet<Segment> set = packMap.get(seg0);
       if (set == null) {
-        set = new TreeSet<IndexedSplit>();
+        set = new TreeSet<Segment>();
         packMap.put(seg0, set);
       }
       set.add(seg1);
@@ -81,7 +81,7 @@ public class MapTaskPacker {
 
     //responsible to also remove duplicates
     public void removePair(Segment seg0, Segment seg1) {
-      TreeSet<IndexedSplit> set = packMap.get(seg0);
+      TreeSet<Segment> set = packMap.get(seg0);
       if (set != null) {
         set.remove(seg1);
         if (set.isEmpty()) packMap.remove(seg0);
@@ -101,7 +101,7 @@ public class MapTaskPacker {
       return packMap.size();
     }
 
-    public Set<IndexedSplit> keySet() {
+    public Set<Segment> keySet() {
       return packMap.keySet();
     }
 
@@ -113,7 +113,7 @@ public class MapTaskPacker {
         current = packMap.keySet().iterator().next();
       }
 
-      TreeSet<IndexedSplit> set = packMap.get(current);
+      TreeSet<Segment> set = packMap.get(current);
       while ((set == null) || (set.isEmpty())) {
         packMap.remove(current);
         if (packMap.isEmpty()) return null;
@@ -172,11 +172,12 @@ public class MapTaskPacker {
    *
    * JoinTable is a table to describe the join set of every segment.
    */
-  private void initJoinTable(List<Segment[]> segList) {
+  private void initJoinTable(List<Segment[]> joinList) {
+    
     joinTable = new HashMap<Segment, TreeSet<Segment>>();
 
     //add each pair to two sets.
-    for (Segment[] pair : segList) {
+    for (Segment[] pair : joinList) {
       for (int i = 0; i < 2; ++i) {
         TreeSet<Segment> set = joinTable.get(pair[i]);
         if (set == null) {
@@ -202,7 +203,6 @@ public class MapTaskPacker {
    */
   private void initGroups() {
     groups = new ArrayList<ArrayList<Segment>>();
-
     //keep a cache for the largest set in a group
     Map<Integer, TreeSet<Segment>> largestCache = 
         new HashMap<Integer, TreeSet<Segment>>();
@@ -258,7 +258,7 @@ public class MapTaskPacker {
       smaller = first;
     }
     int numOverlap = 0;
-    for(IndexedSplit split : smaller) {
+    for(Segment seg : smaller) {
       if (larger.contains(split)) {
         numOverlap ++;
       }
@@ -331,33 +331,35 @@ public class MapTaskPacker {
     //no pack if no group.
     if ((groups == null) || (groups.isEmpty())) return null;
 
-    //pack from the group with most local splits
-    //select tasks from the largest join set.
+    //select from the group with least local leftSize
+    //select from the largest join set.
     Segments cache = new Segments(staticCache);
     cache.add(dynamicCache);
     List<CoverInfo> bestGroup = chooseGroup(cache, cacheSize);
     if (bestGroup == null) return null;
     Set<Segment> largestSet = getLargestSet(bestGroup, cacheSize);
+    if (largestSet == null) return null;
 
-    //actuall form the join set
     int numPackedTasks = 0;
     long sizeLeft;
     boolean finished = false;
     Pack newPack = new Pack();
-    Set<Segment> chosenSegment = new HashSet<Segment>();
-    // use a portion of the cache for the join set.
+    Set<Segment> chosenSegments = new HashSet<Segment>();
     float overCacheFactor = 
         conf.getFloat("mapred.map2.taskPacker.overCacheFactor", 0.8);
     long usableCacheSize = cacheSize * overCacheFactor;
     sizeLeft = usableCacheSize / 2;
-    Set<Segment> chosenSet = new TreeSet<Segment>();
+    //actually select form the join set
+    // use a portion of the cache for the join set.
+    Set<Segment> chosenJoinSet = new TreeSet<Segment>();
     for(Segment seg : largestSet) {
-      chosenSet.add(seg);
+      chosenJoinSet.add(seg);
       CoverInfo info = staticCache.cover(seg);
       sizeLeft -= info.leftSize;
-      chosenSegment.add(seg);
+      chosenSegments.add(seg);
       if (sizeLeft < 0) break;
     }
+    if (chosenSet.isEmpty()) return null;
 
     //start packing
     sizeLeft += usableCacheSize / 2;
@@ -370,11 +372,15 @@ public class MapTaskPacker {
       //we need to know the if static cache can cover this segment
       CoverInfo staticInfo = staticCache.cover(info.segment);
 
+      if (!chosenSegments.contains(info.segment))
+        if (sizeLeft - staticInfo.leftSize < 0)
+          continue;
+
       Set<Segment> join = joinTable.get(info.segment);
       if (join == null) continue;
 
       int count = 0;
-      for (Segment seg : chosenSet) {
+      for (Segment seg : chosenJoinSet) {
         if (join.contains(seg)) {
           newPack.addPair(info.segment, seg);
           Segment[] toDelete = new Segment[2];
@@ -384,7 +390,7 @@ public class MapTaskPacker {
           numPackedTasks ++;
           count ++;
           if (numPackedTasks >= maxPackSize) {
-            LOG.debug("Reached pack size: local packing");
+            LOG.debug("Reached pack size");
             finished = true;
             break;
           }
@@ -392,7 +398,7 @@ public class MapTaskPacker {
       }
 
       if (count != 0) {
-        //at least one join split is chosen
+        //at least one join segment is chosen
         if (!chosenSegments.contains(info.segment)) {
           chosenSegments.add(info.segment);
           sizeLeft -= staticInfo.leftSize;
@@ -405,110 +411,6 @@ public class MapTaskPacker {
     removePairs(deleteList);
     long end = System.currentTimeMillis();
     LOG.debug("Finished last level packing in " + (end - start) + " ms " );
-    return newPack;
-
-    // obtain local tasks first
-    for (IndexedSplit local : cache) {
-      //only splits in the old dynamic cache will increase the size, 
-      //static splits are local.
-      if (dynamicCache.contains(local))
-        if (sizeLeft - local.size() < 0) 
-          continue;
-
-      //grab all splits in chosenSet that are also in joinSet
-      tmp = joinTable.get(local);
-      if (tmp == null) continue;
-
-      int count = 0;
-      for (IndexedSplit split : chosenSet) {
-        if (tmp.contains(split)) {
-          newPack.addPair(local, split);
-          IndexedSplit[] toDelete = new IndexedSplit[2];
-          toDelete[0] = local;
-          toDelete[1] = split;
-          deleteList.add(toDelete);
-          numPackedTasks ++;
-          count ++;
-          if (numPackedTasks >= maxPackSize) {
-            LOG.debug("Reached pack size: local packing");
-            finished = true;
-            break;
-          }
-        }
-      }
-
-      if (count != 0) {
-        //at least one join split is chosen
-        if (dynamicCache.contains(local)) {
-          newDynamicCache.add(local);
-          sizeLeft -= local.size();
-        }
-      }
-
-      if (finished == true) break;
-    }
-
-    if (finished == true) {
-      removePairs(deleteList);
-      return newPack;
-    }
-
-    // try all non-locals in the same group
-    for (IndexedSplit any : groups.get(bestGroupIndex)) {
-
-      //check cache size
-      if ((!staticCache.contains(any)) &&
-          (!newDynamicCache.contains(any))) {
-        if (sizeLeft - any.size() < 0) {
-          //size will exceed, do not try further.
-          LOG.debug("Reached size limit, num cached splits: " + 
-                    newDynamicCache.size());
-          finished = true;
-          break;
-        }
-      }
-      
-      //grab all splits in chosenSet that are also in joinSet
-      tmp = joinTable.get(any);
-      if (tmp == null)  continue;
-
-      int count = 0;
-      for (IndexedSplit split : chosenSet) {
-        if (tmp.contains(split)) {
-          newPack.addPair(any, split);
-          IndexedSplit[] toDelete = new IndexedSplit[2];
-          toDelete[0] = any;
-          toDelete[1] = split;
-          deleteList.add(toDelete);
-          numPackedTasks ++;
-          count ++;
-          if (numPackedTasks >= maxPackSize) {
-            LOG.debug("Reached pack size: non-local packing");
-            finished = true;
-            break;
-          }
-        }
-      }
-      
-      if (count != 0) {
-        if ((!staticCache.contains(any)) &&
-            (!newDynamicCache.contains(any))) {
-          //we chose some of "any"'s join set
-          //we should put "any" into the new cache
-          newDynamicCache.add(any);
-          sizeLeft -= any.size();
-        }
-      }
-
-      if (finished == true) break;
-    }
-
-    removePairs(deleteList);
-
-    long end = System.currentTimeMillis();
-
-    LOG.debug("Finished last level packing in " + (end - start) + " ms " );
-
     return newPack;
   }
 
@@ -548,7 +450,6 @@ public class MapTaskPacker {
   
   //choose the largest join set in a group
   private Set<Segment> getLargestSet(List<CoverInfo> group, long size) {
-    int largest = 0;
     Set<Segment> chosenSet = null;
     int idx = 0;
     long left = size;
@@ -556,8 +457,7 @@ public class MapTaskPacker {
       CoverInfo info = group.get(idx);
       left -= info.leftSize;
       Set<Segment> currSet = joinTable.get(info.segment);
-      if (currSet.size() > largest) {
-        largest = currSet.size();
+      if (currSet.size() > chosenSet.size()) {
         chosenSet = currSet;
       }
     }
@@ -579,66 +479,68 @@ public class MapTaskPacker {
     Pack subPack = new Pack();
 
     //choose largest set
-    int largest = 0;
-    TreeSet<IndexedSplit> largestSet = null;
-    for(IndexedSplit split : pack.keySet()) {
-      TreeSet<IndexedSplit> set = pack.get(split);
+    TreeSet<Segment> largestSet = null;
+    for(Segment seg : pack.keySet()) {
+      TreeSet<Segment> set = pack.get(seg);
       if ((largestSet == null) ||
           (set.size() > largestSet.size())) {
-        largest = set.size();
         largestSet = set;
       }
     }
 
     if (largestSet == null) return null;
 
+    Set<Segment> chosenSegments = new HashSet<Segment>();
     //choose a sub set to fill half cache
-    long sizeLeft = cacheSize / 2;
-    TreeSet<IndexedSplit> chosenSet = new TreeSet<IndexedSplit>();
-    for(IndexedSplit split : largestSet) {
-      if (sizeLeft - split.size() < 0) break;
-      chosenSet.add(split);
-      sizeLeft -= split.size();
+    float overCacheFactor = 
+        conf.getFloat("mapred.map2.taskPacker.overCacheFactor", 0.8);
+    long usableCacheSize = cacheSize * overCacheFactor;
+    long sizeLeft = usableCacheSize / 2;
+    TreeSet<Segment> chosenSet = new TreeSet<Segment>();
+    for(Segment seg : largestSet) {
+      if (sizeLeft - seg.getLength() < 0) break;
+      chosenSet.add(seg);
+      chosenSegments.add(seg);
+      sizeLeft -= seg.getLength();
     }
 
 
     //choose corresponding tasks
     boolean finished = false;
-    sizeLeft += cacheSize / 2;
-    List<IndexedSplit[]> deleteList = new ArrayList<IndexedSplit[]>();
-    Set<IndexedSplit> cachedSet = new HashSet<IndexedSplit>();
-    for (IndexedSplit split : pack.keySet()) {
-      TreeSet<IndexedSplit> set = pack.get(split);
-      for (IndexedSplit joinSplit : set) {
+    sizeLeft += usableCacheSize / 2;
+    List<Segment[]> deleteList = new ArrayList<Segment[]>();
+    for (Segment seg : pack.keySet()) {
+      TreeSet<Segment> set = pack.get(seg);
+      for (Segment joinSeg : set) {
 
-        if (chosenSet.contains(joinSplit)) {
+        if (chosenSet.contains(joinSeg)) {
           //the first time split appears we should check the size
           //and add it to the cachedSet.
-          if (!cachedSet.contains(split)) {
-            if (sizeLeft - split.size() < 0) {
+          if (!chosenSegments.contains(split)) {
+            if (sizeLeft - seg.getLength() < 0) {
               finished = true;
               break;
             }
-            cachedSet.add(split);
-            sizeLeft -= split.size();
+            chosenSegments.add(seg);
+            sizeLeft -= seg.getLength();
           }
 
 //          LOG.debug("add to memory: " + split.getIndex());
 //          LOG.debug("sizeLeft: " + sizeLeft);
 //          LOG.debug("split size: " + split.size());
 
-          subPack.addPair(split, joinSplit);
-          IndexedSplit[] toDelete = new IndexedSplit[2];
-          toDelete[0] = split;
-          toDelete[1] = joinSplit;
+          subPack.addPair(seg, joinSeg);
+          Segment[] toDelete = new Segment[2];
+          toDelete[0] = seg;
+          toDelete[1] = joinSeg;
           deleteList.add(toDelete);
         }
       }
       if (finished) break;
     }
 
-    for (IndexedSplit[] splitPair : deleteList) {
-      pack.removePair(splitPair[0], splitPair[1]);
+    for (Segment[] segPair : deleteList) {
+      pack.removePair(segPair[0], segPair[1]);
     }
 
     long end = System.currentTimeMillis();
@@ -650,42 +552,43 @@ public class MapTaskPacker {
    * Update members when move pairs of splits to pack This tries to maintain
    * the following rules.
    *
-   * 1. a split is a key in joinTable if and only if the join set is non-empty;
-   * 2. split has no order, (split0, split1), (split1, split0) * will both
+   * 1. a seg is a key in joinTable if and only if the join set is non-empty;
+   * 2. seg has no order, (seg, split1), (seg, split0) * will both
    * appear or neither in joinTable; 
-   * 3. a split is in groups if and only if it is a key in joinTable; 
-   * 4. a split is a key in groupCache if and only if it is in groups.
+   * 3. a seg is in groups if and only if it is a key in joinTable; 
    */
-  private void removePairs(List<IndexedSplit[]> splitList) {
-    for(IndexedSplit[] pair : splitList) {
-      IndexedSplit split0 = pair[0];
-      IndexedSplit split1 = pair[1];
-      TreeSet<IndexedSplit> tmpSet;
+  private void removePairs(List<Segment[]> pairList) {
+    for(Segment[] pair : pairList) {
+      Segment seg0 = pair[0];
+      Segment seg1 = pair[1];
+      TreeSet<Segment> tmpSet;
 
-      tmpSet = joinTable.get(split0);
+      tmpSet = joinTable.get(seg0);
       //we can simply continue from here if tmpSet is null
       //because splits appear in pair.
       if (tmpSet == null) continue;
-      tmpSet.remove(split1);
-      clearSplitIfEmpty(split0);
+      tmpSet.remove(seg1);
+      clearSegIfEmpty(seg0);
 
-      tmpSet = joinTable.get(split1);
+      tmpSet = joinTable.get(seg1);
       if (tmpSet == null) continue;
-      tmpSet.remove(split0);
-      clearSplitIfEmpty(split1);
+      tmpSet.remove(seg0);
+      clearSplitIfEmpty(seg1);
     }
   }
 
-  private void clearSplitIfEmpty(IndexedSplit split) {
-      TreeSet<IndexedSplit> tmpSet;
-      tmpSet = joinTable.get(split);
+  private void clearSegIfEmpty(Segment seg) {
+      TreeSet<Segment> tmpSet;
+      tmpSet = joinTable.get(seg);
       if (tmpSet.isEmpty()) {
-        joinTable.remove(split);
-        int groupIndex = groupCache.get(split);
-        HashSet<IndexedSplit> group = groups.get(groupIndex);
-        group.remove(split);
-        if (group.isEmpty()) groups.remove(groupIndex);
-        groupCache.remove(split);
+        joinTable.remove(seg);
+        List<Segment> group = null;
+        int i;
+        for (i = 0; i < groups.size(); ++i) {
+          group = groups.get(i);
+          if (group.remove(seg)) break;
+        }
+        if (group.isEmpty()) groups.remove(i);
       }
   }
 

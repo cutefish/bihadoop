@@ -68,6 +68,11 @@ import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.util.StringUtils;
 
+//Added by xyu40@gatech.edu
+import org.apache.hadoop.map2.Map2MetaInfo;
+import org.apache.hadoop.map2.MapTaskPacker;
+//end xyu40@gatech.edu
+
 /*************************************************************
  * JobInProgress maintains all the info for keeping
  * a Job on the straight and narrow.  It keeps its JobProfile
@@ -316,6 +321,11 @@ public class JobInProgress {
   private Path jobSubmitDir = null;
 
   final private UserGroupInformation userUGI;
+
+  //Added by xyu40@gatech.edu
+  Map2MetaInfo info;
+  MapTaskPacker packer;
+  //end xyu40@gatech.edu
   
   /**
    * Create an almost empty JobInProgress, which can be used only for tests
