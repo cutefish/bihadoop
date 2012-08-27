@@ -1,13 +1,29 @@
 package org.apache.hadoop.map2;
 
-import java.util.LinkedList;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-import org.apache.haddop.fs.Path;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.WritableUtils;
+import org.apache.hadoop.mapreduce.InputSplit;
+import org.apache.hadoop.mapreduce.JobID;
 import org.apache.hadoop.mapreduce.JobSubmissionFiles;
 
 import org.apache.hadoop.fs.Segment;
-import org.apache.hadoop.fs.SegmentUtils;
+import org.apache.hadoop.fs.Segments;
 
 /** 
  * A utility that reads the necessary info for scheduling, which includes:
@@ -19,13 +35,15 @@ import org.apache.hadoop.fs.SegmentUtils;
 
 public class Map2MetaInfo {
 
+  private static final Log LOG = LogFactory.getLog(Map2MetaInfo.class);
+
   //ToDo: support set instead of pair
   private List<Segment[]> segList;
   private Map<SegmentPair, Integer> segTaskMap;
   private Map<String, List<Segment>> localityMap;
 
   public Map2MetaInfo() {
-    segList = new LinkedList<Segment[]>();
+    segList = new ArrayList<Segment[]>();
     segTaskMap = new HashMap<SegmentPair, Integer>();
     localityMap = new HashMap<String, List<Segment>>();
   }
@@ -57,18 +75,13 @@ public class Map2MetaInfo {
           String loc = Text.readString(in);
           List<Segment> localList = localityMap.get(loc);
           if (localList == null) {
-            localList = new LinkedList<Segment>();
+            localList = new ArrayList<Segment>();
           }
-          //insert with order
-          int idx = SegmentUtils.findSegment(localList, segs[j]);
+          //insert with order, assuming segments do not overlap
+          int idx = Collections.binarySearch(localList, segs[j]);
           if (idx < 0) {
-            //no overlaping segments in the list
             idx = -(idx + 1);
             localList.add(idx, segs[j]);
-          }
-          else {
-            //there is some overlaping segments in the list
-            //let's just assume they are the same for now.
           }
         }
       }
@@ -78,7 +91,7 @@ public class Map2MetaInfo {
     }
   }
 
-  public static SegmentPair {
+  public static class SegmentPair {
 
     Segment seg0;
     Segment seg1;
@@ -115,7 +128,8 @@ public class Map2MetaInfo {
     }
   }
 
-  public int getTaskIndex(SegmentPair pair) {
+  public int getTaskIndex(Segment seg0, Segment seg1) {
+    SegmentPair pair = new SegmentPair(seg0, seg1);
     return segTaskMap.get(pair);
   }
 
@@ -123,8 +137,8 @@ public class Map2MetaInfo {
     return segList;
   }
 
-  public List<Segment> getlocalSegments(String host) {
-    return localityMap.get(host);
+  public Segments getLocalSegments(String host) {
+    return new Segments(localityMap.get(host));
   }
   
 

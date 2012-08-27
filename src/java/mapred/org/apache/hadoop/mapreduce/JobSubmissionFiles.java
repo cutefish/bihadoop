@@ -50,7 +50,7 @@ public class JobSubmissionFiles {
   }
   
   //Added by xyu40@gatech.edu
-  public static Path getJobSplitMetaFile(Path jobSubmissionDir) {
+  public static Path getJobMap2MetaFile(Path jobSubmissionDir) {
     return new Path(jobSubmissionDir, "job.splitmap2metainfo");
   }
   //end xyu40@gatech.edu

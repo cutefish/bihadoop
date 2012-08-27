@@ -99,6 +99,7 @@ public abstract class FileSystem extends Configured implements Closeable {
    * A block cache client to contact server.
    */
   private BlockCacheClient cacheClient;
+  //end xyu40@gatech
 
   /**
    * This method adds a file system for testing so that we can find it later.
@@ -165,7 +166,7 @@ public abstract class FileSystem extends Configured implements Closeable {
   public void initialize(URI name, Configuration conf) throws IOException {
     statistics = getStatistics(name.getScheme(), getClass());    
     //Added by xyu40@gatech.edu
-    cacheClient = new BlockCacheClient();
+    cacheClient = new BlockCacheClient(conf);
     //end xyu40@gatech.edu
   }
 
@@ -458,7 +459,7 @@ public abstract class FileSystem extends Configured implements Closeable {
   }
 
   public FSInputStream getInputStream(Path f, int bufferSize) throws IOException {
-    return null;
+    throw new IOException("SubClass should override this");
   }
   //end xyu40@gatech.edu
     

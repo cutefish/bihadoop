@@ -13,7 +13,7 @@ import java.util.NoSuchElementException;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.core.Configuration;
+import org.apache.hadoop.conf.Configuration;
 
 import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.fs.Segments;
@@ -151,15 +151,14 @@ public class MapTaskPacker {
    * Segments in each split are not ordered, that is, we do not distinguish 
    * segment[0] and segment[1]
    */
-  public void init(List<Segment[]> segList, int clusterSize) {
+  public void init(List<Segment[]> segList) {
 
     long start = System.currentTimeMillis();
 
     this.clusterSize = clusterSize;
     initJoinTable(segList);
     initGroups();
-    maxPackSize = totalNumMaps / clusterSize + 
-        ((totalNumMaps % clusterSize == 0) ? 0 : 1);
+    maxPackSize = 1;
 
     long end = System.currentTimeMillis();
 
@@ -202,7 +201,7 @@ public class MapTaskPacker {
    * cache status of each node.
    */
   private void initGroups() {
-    groups = new ArrayList<ArrayList<Segment>>();
+    groups = new ArrayList<List<Segment>>();
     //keep a cache for the largest set in a group
     Map<Integer, TreeSet<Segment>> largestCache = 
         new HashMap<Integer, TreeSet<Segment>>();
@@ -259,7 +258,7 @@ public class MapTaskPacker {
     }
     int numOverlap = 0;
     for(Segment seg : smaller) {
-      if (larger.contains(split)) {
+      if (larger.contains(seg)) {
         numOverlap ++;
       }
     }
@@ -288,7 +287,7 @@ public class MapTaskPacker {
   public String groupsToString() {
     StringBuilder ret = new StringBuilder();
     ret.append("groupNo " + groups.size() + '\n');
-    for (int i : groups.keySet()) {
+    for (int i = 0; i < groups.size(); ++i) {
       ret.append("group " + i + '\n');
       List<Segment> group = groups.get(i);
       for (Segment seg0 : group) {
@@ -324,7 +323,11 @@ public class MapTaskPacker {
    */
   public synchronized Pack obtainLastLevelPack(Segments staticCache, 
                                                Segments dynamicCache, 
-                                               long cacheSize) {
+                                               long cacheSize, 
+                                               int clusterSize) {
+    maxPackSize = totalNumMaps / clusterSize + 
+        ((totalNumMaps % clusterSize == 0) ? 0 : 1);
+
     long start = System.currentTimeMillis();
 
     LOG.info("Generating a last level pack");
@@ -346,8 +349,8 @@ public class MapTaskPacker {
     Pack newPack = new Pack();
     Set<Segment> chosenSegments = new HashSet<Segment>();
     float overCacheFactor = 
-        conf.getFloat("mapred.map2.taskPacker.overCacheFactor", 0.8);
-    long usableCacheSize = cacheSize * overCacheFactor;
+        conf.getFloat("mapred.map2.taskPacker.overCacheFactor", 0.8f);
+    long usableCacheSize = (long)(cacheSize * overCacheFactor);
     sizeLeft = usableCacheSize / 2;
     //actually select form the join set
     // use a portion of the cache for the join set.
@@ -359,7 +362,7 @@ public class MapTaskPacker {
       chosenSegments.add(seg);
       if (sizeLeft < 0) break;
     }
-    if (chosenSet.isEmpty()) return null;
+    if (chosenJoinSet.isEmpty()) return null;
 
     //start packing
     sizeLeft += usableCacheSize / 2;
@@ -493,8 +496,8 @@ public class MapTaskPacker {
     Set<Segment> chosenSegments = new HashSet<Segment>();
     //choose a sub set to fill half cache
     float overCacheFactor = 
-        conf.getFloat("mapred.map2.taskPacker.overCacheFactor", 0.8);
-    long usableCacheSize = cacheSize * overCacheFactor;
+        conf.getFloat("mapred.map2.taskPacker.overCacheFactor", 0.8f);
+    long usableCacheSize = (long)(cacheSize * overCacheFactor);
     long sizeLeft = usableCacheSize / 2;
     TreeSet<Segment> chosenSet = new TreeSet<Segment>();
     for(Segment seg : largestSet) {
@@ -516,7 +519,7 @@ public class MapTaskPacker {
         if (chosenSet.contains(joinSeg)) {
           //the first time split appears we should check the size
           //and add it to the cachedSet.
-          if (!chosenSegments.contains(split)) {
+          if (!chosenSegments.contains(seg)) {
             if (sizeLeft - seg.getLength() < 0) {
               finished = true;
               break;
@@ -573,7 +576,7 @@ public class MapTaskPacker {
       tmpSet = joinTable.get(seg1);
       if (tmpSet == null) continue;
       tmpSet.remove(seg0);
-      clearSplitIfEmpty(seg1);
+      clearSegIfEmpty(seg1);
     }
   }
 

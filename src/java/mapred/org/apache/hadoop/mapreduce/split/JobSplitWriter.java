@@ -42,6 +42,7 @@ import org.apache.commons.logging.LogFactory;
 //Added by xyu40@gatech.edu
 import org.apache.hadoop.io.Text;
 
+import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.map2.Map2Split;
 //end xyu40@gatech.edu
 
@@ -85,7 +86,7 @@ public class JobSplitWriter {
     //Added by xyu40@gatech
     if (conf.getBoolean("mapred.map2.enabledMap2", false)) {
       writeJobMap2MetaInfo(fs, 
-                           JobSumbmissionFiles.getJobMap2MetaFile(jobSubmitDir),
+                           JobSubmissionFiles.getJobMap2MetaFile(jobSubmitDir),
                            new FsPermission(
                                JobSubmissionFiles.JOB_FILE_PERMISSION),
                            splits);
@@ -212,7 +213,7 @@ public class JobSplitWriter {
   }
 
   //Added by xyu40@gatech.edu
-  private static <T extends Map2Split> void writeJobMap2MetaInfo(
+  private static <T extends InputSplit> void writeJobMap2MetaInfo(
       FileSystem fs, Path filename, FsPermission p, T[] splits) {
     FSDataOutputStream out = FileSystem.create(fs, filename, p);
     out.write("MAP2-INFO".getBytes("UTF-8"));
@@ -226,7 +227,6 @@ public class JobSplitWriter {
         String[] hosts = split.getHosts()[i];
         WritableUtils.writeVInt(out, hosts.length);
         for (int j = 0; j < hosts.length; ++j) {
-          hosts[j].write(out);
           Text.writeString(out, hosts[j]);
         }
       }

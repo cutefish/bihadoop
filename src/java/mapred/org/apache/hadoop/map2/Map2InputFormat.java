@@ -1,20 +1,33 @@
 package org.apache.hadoop.map2;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.core.fs.Segment;
-import org.apache.hadoop.mapreduce.lib.input;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.BlockLocation;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.Segment;
+import org.apache.hadoop.mapreduce.InputSplit;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.JobContext;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.net.NetworkTopology;
+import org.apache.hadoop.util.ReflectionUtils;
 
 /**
  * An InputFormat capable of accept multiple splits with indices.
  *
  * Currently only support two splits.
  */
-public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
+abstract public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
 
   private static final Log LOG = LogFactory.getLog(Map2InputFormat.class);
 
@@ -27,7 +40,7 @@ public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
     Map<Segment, String[]> segLocMap = new HashMap<Segment, String[]>();
 
     List<FileStatus> files = listStatus(job);
-    IndexedFileReader reader;
+    IndexedFileReader reader = new IndexedFileReader();
     NetworkTopology clusterMap = new NetworkTopology();
     for (FileStatus file: files) {
       Path path = file.getPath();
@@ -37,17 +50,16 @@ public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
           fs.getFileBlockLocations(file, 0, length);
       if (fileNameAsIndex(job)) {
         //use file name as index, total file as the segment
-        indices.add(path.toString());
+        idxList.add(path.toString());
         Segment seg = new Segment(path, 0, length);
         segmentList.add(new Segment[] { seg });
-        String[] splitHosts = getSplitHosts(blkLocations, 
-                                            0, length, clusterMap);
-        segLocMap.put(seg, splitHosts);
+        int blkIndex = getBlockIndex(blkLocations, 0);
+        segLocMap.put(seg, blkLocations[blkIndex].getHosts());
       }
       else {
         reader.readIndexedFile(fs, path);
         //add to list
-        indices.addAll(reader.getIndexList());
+        idxList.addAll(reader.getIndexList());
         List<Segment[]> indexedSegments = reader.getSegmentList();
         segmentList.addAll(indexedSegments);
         //get locations for all segments
@@ -55,10 +67,8 @@ public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
           ArrayList<String> locations = new ArrayList<String>();
           for (Segment seg : segs) {
             long off = seg.getOffset();
-            long len = seg.getLength();
-            String[] splitHosts = getSplitHosts(blkLocations, off, 
-                                                len, clusterMap);
-            segLocMap.put(seg, splitHosts);
+            int blkIndex = getBlockIndex(blkLocations, off);
+            segLocMap.put(seg, blkLocations[blkIndex].getHosts());
           }
         }
       }
@@ -85,22 +95,23 @@ public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
         if (filter.accept(idxList.get(i), idxList.get(j))) {
           Segment[] segs = combineArray(
               segmentList.get(i), segmentList.get(j));
-          String[][] hosts = new String[segs.length];
-          for (int i = 0; i < segs.length; ++i) {
-              hosts[i] = segLocMap.get(segs[i]);
+          String[][] hosts = new String[segs.length][];
+          for (int k = 0; k < segs.length; ++k) {
+              hosts[k] = segLocMap.get(segs[k]);
           }
           Map2Split split = new Map2Split(segs, hosts);
           splits.add(split);
         }
       }
     }
+    return splits;
   }
 
-  private static T[] combineArray(T[] a, T[] b) {
+  private static Segment[] combineArray(Segment[] a, Segment[] b) {
     int length = a.length + b.length;
-    T[] ret = new T[length];
+    Segment[] ret = new Segment[length];
     System.arraycopy(a, 0, ret, 0, a.length);
-    System.arraycoopy(b, 0, a.length, b.length);
+    System.arraycopy(b, 0, ret, a.length, b.length);
     return ret;
   }
 
@@ -118,12 +129,8 @@ public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
         ReflectionUtils.newInstance(filterClass, conf) : null;
   }
 
-  public Map<Segment, String[]> getSegmentLocations() {
-    return segLocations;
-  }
-
-  private boolean fileNameAsIndex(JobContext job) {
-    Configuraiton conf = context.getConfiguration();
+  private boolean fileNameAsIndex(JobContext context) {
+    Configuration conf = context.getConfiguration();
     return conf.getBoolean("mapred.map2.input.fileNameAsIndex", false);
   }
 }

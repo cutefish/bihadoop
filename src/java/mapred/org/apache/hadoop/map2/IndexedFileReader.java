@@ -1,11 +1,18 @@
 package org.apache.hadoop.map2;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.util.StringUtils;
 
+import org.apache.hadoop.fs.Segment;
 /**
  * A utility that reads a indexed file .
  *
@@ -48,7 +55,7 @@ public class IndexedFileReader {
     catch (IOException ioe) {
       LOG.info("Read error on " + idxPath + ": " + 
                StringUtils.stringifyException(ioe));
-      throw;
+      throw ioe;
     }
   }
 

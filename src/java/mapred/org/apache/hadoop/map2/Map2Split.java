@@ -1,15 +1,23 @@
 package org.apache.hadoop.map2;
 
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.hadoop.fs.Segment;
+import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.io.WritableFactory;
+import org.apache.hadoop.io.WritableFactories;
+
 
 /**
  * Multiple segments of files. Returned by {@link
  * Map2InputFormat#getSplits(JobConf, int)} and passed to
  * {@link InputFormat#getRecordReader{InputSplit, Jobconf, Reporter)}.
  */
-public class Map2Split implements SegmentedSplit {
+public class Map2Split extends SegmentedSplit {
 
   //A Map2Split can have multiple segments;
   private Segment[] segs;
@@ -19,7 +27,7 @@ public class Map2Split implements SegmentedSplit {
   Map2Split() { }
 
   public Map2Split(Segment[] segs) {
-    Map2Split(segs, (String[][])null);
+    this(segs, (String[][])null);
   }
 
   public Map2Split(Segment[] segs, String[][] hosts) {
@@ -42,7 +50,7 @@ public class Map2Split implements SegmentedSplit {
       return new String[]{};
     }
     else {
-      List<String> hostList = ArrayList<String>();
+      List<String> hostList = new ArrayList<String>();
       for (int i = 0; i < hosts.length; ++i) {
         for (int j = 0; i < hosts[i].length; ++j) {
           hostList.add(hosts[i][j]);

@@ -69,8 +69,10 @@ import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.util.StringUtils;
 
 //Added by xyu40@gatech.edu
+import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.map2.Map2MetaInfo;
 import org.apache.hadoop.map2.MapTaskPacker;
+import org.apache.hadoop.map2.MapTaskPacker.Pack;
 //end xyu40@gatech.edu
 
 /*************************************************************
@@ -323,8 +325,10 @@ public class JobInProgress {
   final private UserGroupInformation userUGI;
 
   //Added by xyu40@gatech.edu
-  Map2MetaInfo info;
-  MapTaskPacker packer;
+  Map2MetaInfo map2Info;
+  MapTaskPacker map2TaskPacker;
+  Map<String, Pack> memoryPackCache = new HashMap<String, Pack>();
+  Map<String, Pack> diskPackCache = new HashMap<String, Pack>();
   //end xyu40@gatech.edu
   
   /**
@@ -376,6 +380,11 @@ public class JobInProgress {
     } catch (IOException ie){
       throw new RuntimeException(ie);
     }
+
+    //Added by xyu40@gatech.edu
+    map2Info = new Map2MetaInfo();
+    map2TaskPacker = new MapTaskPacker(conf);
+    //end xyu40@gatech.edu
   }
   
   JobInProgress(JobTracker jobtracker, final JobConf default_conf, 
@@ -493,6 +502,11 @@ public class JobInProgress {
       
       // Check task limits
       checkTaskLimits();
+
+      //Added by xyu40@gatech.edu
+      map2Info = new Map2MetaInfo();
+      map2TaskPacker = new MapTaskPacker(conf);
+      //end xyu40@gatech.edu
     } finally {
       //close all FileSystems that was created above for the current user
       //At this point, this constructor is called in the context of an RPC, and
@@ -742,6 +756,15 @@ public class JobInProgress {
     if (numMapTasks > 0) { 
       nonRunningMapCache = createCache(splits, maxLevel);
     }
+
+    //Added by xyu40@gatech.edu
+
+    //deal with map2 feature
+    if (conf.getBoolean("mapred.map2.enabledMap2", false)) {
+      map2Info.readMetaInfo(jobId, fs, conf, jobSubmitDir);
+      map2TaskPacker.init(map2Info.getSegmentList());
+    }
+    //end xyu40@gatech.edu
 
     // set the launch time
     this.launchTime = jobtracker.getClock().getTime();
@@ -2301,6 +2324,12 @@ public class JobInProgress {
     }
 
     Node node = jobtracker.getNode(tts.getHost());
+
+    //Added by xyu40
+    //use map2 packing 
+    int tipIdx = getMapTaskFromPack(tts, clusterSize);
+    if (0 <= tipIdx && tipIdx <= numMapTasks) return tipIdx;
+    //end xyu40
     
     //
     // 1) Non-running TIP :
@@ -2452,6 +2481,52 @@ public class JobInProgress {
     }
     
     return -1;
+  }
+
+  private int getMapTaskFromPack(TaskTrackerStatus tts,
+                                 int clusterSize) {
+    String host = tts.getHost();
+    Segment[] task = null;
+    while (task == null) {
+      Pack memoryPack = memoryPackCache.get(host);
+      if (memoryPack == null) {
+        LOG.debug("Node: " + host + " no memory pack available\n");
+        Pack diskPack = diskPackCache.get(host);
+        if (diskPack == null) {
+          LOG.debug("Node: " + host + " no disk pack available\n");
+          diskPack = map2TaskPacker.obtainLastLevelPack(
+              map2Info.getLocalSegments(host),
+              tts.getCachedSegments(),
+              tts.getDiskCacheCapacity(), clusterSize);
+          if (diskPack == null) {
+            LOG.debug("Node: " + host + " cannot get a disk level pack\n");
+            break;
+          }
+          diskPackCache.put(host, diskPack);
+          LOG.info("Node: " + host + '\n' + 
+                   "Level: " + "disk" + '\n' +
+                   "Pack: " + '\n' + diskPack.toString() + '\n');
+        }
+        memoryPack = map2TaskPacker.obtainSubpack(
+            diskPack, tts.getMemoryCacheCapacity());
+        if (memoryPack == null) {
+          LOG.debug("Node: " + host + " finished a disk pack\n");
+          diskPackCache.remove(host);
+          continue;
+        }
+        LOG.info("Node: " + host + '\n' + 
+                 "Level: " + "memory" + '\n' +
+                 "Pack: " + '\n' + memoryPack.toString() + '\n');
+        memoryPackCache.put(host, memoryPack);
+      }
+      task = memoryPack.getNext();
+      if (task == null) {
+        LOG.info("Node: " + host + " finished a memory pack\n");
+        memoryPackCache.remove(host);
+      }
+    }
+    if (task == null) return -1;
+    return map2Info.getTaskIndex(task[0], task[1]);
   }
 
   /**

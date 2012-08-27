@@ -1,8 +1,15 @@
 package org.apache.hadoop.fs;
 
+import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
 import java.net.URI;
 
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.io.WritableFactory;
+import org.apache.hadoop.io.WritableFactories;
 
 /**
  * Unique Identity of a contiguous block of data.
@@ -12,9 +19,9 @@ import org.apache.hadoop.io.Text;
  *
  */
 public class Segment implements Writable, Comparable<Segment> {
-  private Path path;
-  private long off;
-  private long len;
+  protected Path path;
+  protected long off;
+  protected long len;
 
   public Segment() {
     path = null;
@@ -35,8 +42,14 @@ public class Segment implements Writable, Comparable<Segment> {
   }
 
   public Segment(FileSystem fs, Path path, long off, long len) {
-    URI uri = fs.getUri();
-    Segment(uri.getScheme(), uri.getAuthority(), path.toString(), off, len);
+    this(fs.getUri().getScheme(), fs.getUri().getAuthority(), 
+         path.toString(), off, len);
+  }
+
+  public Segment(Segment that) {
+    this.path = that.path;
+    this.off = that.off;
+    this.len = that.len;
   }
 
   public Path getPath() {
@@ -73,7 +86,7 @@ public class Segment implements Writable, Comparable<Segment> {
 
   @Override
   public int hashCode() {
-    return path.hashCode() ^ off ^ len;
+    return path.hashCode() ^ (int)off ^ (int)len;
   }
 
   @Override
@@ -81,9 +94,11 @@ public class Segment implements Writable, Comparable<Segment> {
     if (this == that) return 0;
     int ret = this.path.compareTo(that.path);
     if (ret != 0) return ret;
-    ret = Long.getLong(this.off).compareTo(that.off);
-    if (ret != 0) return ret;
-    return Long.getLong(this.len).compareTo(that.len);
+    if (this.off > that.off) return 1;
+    if (this.off < that.off) return -1;
+    if (this.len > that.len) return 1;
+    if (this.len < that.len) return -1;
+    return 0;
   }
 
   //////////////////////////////////////////////////

@@ -1,10 +1,18 @@
 package org.apache.hadoop.fs;
 
+import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+
+import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.io.WritableFactory;
+import org.apache.hadoop.io.WritableFactories;
 
 /**
  * A collection of segments
@@ -14,7 +22,7 @@ public class Segments implements Writable {
   private List<Segment> thisList;
 
   public Segments() {
-    segments = null;
+    thisList = null;
   }
 
   public Segments(Collection<Segment> c) {
@@ -24,6 +32,11 @@ public class Segments implements Writable {
 
   public Segments(Segments s) {
     thisList = new ArrayList<Segment>(s.thisList);
+  }
+
+  public Segments(Segment[] s) {
+    thisList = new ArrayList<Segment>(Arrays.asList(s));
+    Collections.sort(thisList);
   }
 
   public void add(Segments s) {
@@ -40,7 +53,7 @@ public class Segments implements Writable {
     public final long leftSize;
     public final Segment segment;
 
-    public CoverResult(long leftSize, Segment segment) {
+    public CoverInfo(long leftSize, Segment segment) {
       this.leftSize = leftSize;
       this.segment = segment;
     }
@@ -78,8 +91,8 @@ public class Segments implements Writable {
         thisList.subList(hintStart, hintEnd), key);
     idx = (idx >= 0) ? idx : -(idx + 1);
     if (idx > 0) idx --;
-    long targetStart = key.start;
-    long targetEnd = key.end;
+    long targetStart = key.getOffset();
+    long targetEnd = targetStart + key.getLength();
     Segment curr;
     long leftSize = 0;
     //There are six cases:
@@ -92,21 +105,23 @@ public class Segments implements Writable {
     while(true) {
       if (idx >= thisList.size()) break;
       curr = thisList.get(idx);
+      long currStart = curr.getOffset();
+      long currEnd = currStart + curr.getLength();
       //case (6) calculation ends
-      if (curr.start > targetEnd) break;
+      if (currStart > targetEnd) break;
       //case (4) and (5)
-      if (curr.start > targetStart) {
-        leftSize += curr.start - targetStart;
-        targetStart = curr.start;
+      if (currStart > targetStart) {
+        leftSize += currStart - targetStart;
+        targetStart = currStart;
       }
       //case (3) and (5)
-      if (curr.end > targetEnd) {
+      if (currEnd > targetEnd) {
         targetStart = targetEnd;
         break;
       }
       //case (2) and (4)
-      if (targetStart <= curr.end) {
-        targetStart = curr.end;
+      if (targetStart <= currEnd) {
+        targetStart = currEnd;
       }
       //case (1) do nothing
       idx ++;
@@ -117,9 +132,9 @@ public class Segments implements Writable {
   }
 
   public List<CoverInfo> cover(Collection<Segment> that) {
-    List<Segment> thatList = new ArrayList<Range>(that);
+    List<Segment> thatList = new ArrayList<Segment>(that);
     Collections.sort(thatList);
-    List<CoverInfo> ret = new ArrayList<CoverResult>();
+    List<CoverInfo> ret = new ArrayList<CoverInfo>();
 
     //since both lists are sorted, we can limit the search range.
     int idx;
@@ -156,17 +171,17 @@ public class Segments implements Writable {
   }
 
   public void write(DataOutput out) throws IOException {
-    out.writeInt(segments.size());
-    for (seg : segments) {
+    out.writeInt(thisList.size());
+    for (Segment seg : thisList) {
       seg.write(out);
     }
   }
 
   public void readFields(DataInput in) throws IOException {
     int length = in.readInt();
-    segments = new ArrayList<Segment>(length);
+    thisList = new ArrayList<Segment>(length);
     for (int i = 0; i < length; ++i) {
-      segments.get(i).readFields(in);
+      thisList.get(i).readFields(in);
     }
   }
 

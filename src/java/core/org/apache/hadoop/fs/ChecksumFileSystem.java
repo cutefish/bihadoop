@@ -286,7 +286,7 @@ public abstract class ChecksumFileSystem extends FilterFileSystem {
 
   //Added by xyu40@gateh.edu
   @Override
-  public FSInputStream(Path f, int bufferSize) throws IOException {
+  public FSInputStream getInputStream(Path f, int bufferSize) throws IOException {
     return new ChecksumFSInputChecker(this, f, bufferSize);
   }
   //end xyu40@gatech.edu

@@ -1,19 +1,9 @@
 package org.apache.hadoop.blockcache;
 
 import java.io.IOException;
-import java.io.DataInput;
-import java.io.DataOutput;
 import java.net.URI;
 
-import org.apache.hadoop.core.Configuration;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.io.Text;
-import org.apache.hadoop.io.Writable;
-import org.apache.hadoop.io.WritableFactory;
-import org.apache.hadoop.io.WritableFactories;
 import org.apache.hadoop.ipc.VersionedProtocol;
-
-import org.apache.hadoop.fs.Segments;
 
 /******************************************************************************
  * Protocol that a BlockCacheClient used to contact BlockCacheServer.
@@ -39,6 +29,6 @@ public interface BlockCacheProtocol extends VersionedProtocol {
   /**
    * Returns a list of blocks cached on the server for a user
    */
-  public Segments getCachedBlocks(String user) throws IOException;
+  public BlockCacheStatus getStatus(String user) throws IOException;
 
 }

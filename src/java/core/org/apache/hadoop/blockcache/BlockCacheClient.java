@@ -9,6 +9,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.Path;
@@ -27,7 +28,7 @@ public class BlockCacheClient implements java.io.Closeable {
   private final UserGroupInformation ugi;
   private BlockCacheProtocol server;
 
-  public BlockCacheClient() throws IOException {
+  public BlockCacheClient(Configuration conf) throws IOException {
     ugi = UserGroupInformation.getCurrentUser();
     int port = conf.getInt("block.cache.server.port", 
                            BlockCacheProtocol.DEFAULT_SERVER_PORT);
@@ -46,19 +47,19 @@ public class BlockCacheClient implements java.io.Closeable {
     RPC.stopProxy(server);
   }
 
-  public class CachedFSInputStream extends FSInputStream {
+  private static enum ReadState {
+    REPLICA,
+    CACHE,
+    REMOTE,
+    EOF
+  }
 
-    private enum ReadState {
-      REPLICA,
-      CACHE,
-      REMOTE,
-      EOF
-    }
+  public class CachedFSInputStream extends FSInputStream {
 
     //stream status
     private FileSystem fs = null;
     private boolean closed = false;
-    private ReadState state = REMOTE;
+    private ReadState state = ReadState.REMOTE;
     private FileInputStream localIn = null;
     private FSInputStream backupIn = null;
     private final Path src;
@@ -80,7 +81,7 @@ public class BlockCacheClient implements java.io.Closeable {
     @Override
     public synchronized void close() throws IOException {
       if (closed == true) 
-        return
+        return;
       if (localIn != null) 
         localIn.close();
       backupIn.close();
@@ -103,15 +104,16 @@ public class BlockCacheClient implements java.io.Closeable {
         throw new IOException("Stream closed");
       }
 
-      long n;
+      int n;
 
       //only contact server and update state once
       boolean shouldUpdateState = true;
 
       while (true) {
-        if (blockStart <= pos < blockEnd) {
+        if (blockStart <= pos && pos < blockEnd) {
           //use the current state to read
-          int maxLength = (pos + len >= blockEnd) ? blockEnd - pos : len;
+          int maxLength = (pos + len >= blockEnd) ? 
+              (int)(blockEnd - pos) : len;
           switch (state) {
             case REPLICA:
               n = backupIn.read(buf, off, maxLength);
@@ -163,16 +165,17 @@ public class BlockCacheClient implements java.io.Closeable {
       if (pos >= file.getLen()) return -1;
       BlockLocation[] blocks = fs.getFileBlockLocations(file, pos, 1);
       if ((blocks == null) || (blocks.length == 0)) {
-        throw IOException("No block information for path: " + src);
+        throw new IOException("No block information for path: " + src);
       }
       if (blocks.length > 1) {
-        throw IOException("Too many block information at" + 
-                          " src: " + src.getName() + 
-                          " pos: " + pos);
+        throw new IOException("Too many block information at" + 
+                              " src: " + src.getName() + 
+                              " pos: " + pos);
       }
       blockStart = blocks[0].getOffset();
       blockEnd = blockStart + blocks[0].getLength();
-      int maxLength = (pos + len > blockEnd) ? blockEnd - pos : len;
+      int maxLength = (pos + len > blockEnd) ? 
+          (int)(blockEnd - pos) : len;
       backupIn.seek(pos);
       n = backupIn.read(buf, off, maxLength);
       pos += n;
@@ -183,12 +186,12 @@ public class BlockCacheClient implements java.io.Closeable {
       Block block = server.cacheBlockAt(fs.getUri().toString(),
                                         ugi.getUserName(),
                                         src.toUri().toString(), pos);
-      blockStart = block.getStartOffset();
-      blockEnd = blockStart + block.getBlockLength();
+      blockStart = block.getOffset();
+      blockEnd = blockStart + block.getLength();
 
       if (blockStart == -1) {
         //we reach eof
-        state = EOF;
+        state = ReadState.EOF;
         return; 
       }
 
@@ -197,29 +200,29 @@ public class BlockCacheClient implements java.io.Closeable {
         //it is not necessary that the backupIn will read from the local
         //node, however, it is highly likely that it does so.
         backupIn.seek(pos);
-        state = REPLICA;
+        state = ReadState.REPLICA;
         return;
       }
 
       //here, server has already cached the block for us
       String localPath = block.getLocalPath();
       localIn = new FileInputStream(localPath);
-      localIn.skip(pos - blockStartOffset);
-      state = CACHE;
+      localIn.skip(pos - blockStart);
+      state = ReadState.CACHE;
       return;
     }
 
     @Override
     public synchronized void seek(long pos) throws IOException {
-      if (blockStart <= pos < blockEnd) {
+      if (blockStart <= pos && pos < blockEnd) {
         try {
-          if (state == REPLICA) {
+          if (state == ReadState.REPLICA) {
             backupIn.seek(pos);
             this.pos = pos;
             return;
           }
 
-          if (state == CACHE) {
+          if (state == ReadState.CACHE) {
             long shouldSkip = pos - blockStart;
             while(shouldSkip > 0) {
               long n = localIn.skip(shouldSkip);
@@ -233,7 +236,8 @@ public class BlockCacheClient implements java.io.Closeable {
           LOG.warn("Seek problem: " + StringUtils.stringifyException(e));
         }
       }
-      state = REMOTE;
+      //set state to remote and let the next read deal with the real reads.
+      state = ReadState.REMOTE;
       this.pos = pos;
       localIn.close();
       localIn = null;

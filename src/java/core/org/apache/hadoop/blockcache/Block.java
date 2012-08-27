@@ -1,12 +1,22 @@
 package org.apache.hadoop.blockcache;
 
-import org.apache.hadoop.fs.Segment;
+import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.net.URI;
+
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.io.WritableFactory;
+import org.apache.hadoop.io.WritableFactories;
+
+import org.apache.hadoop.fs.Segment;
 
 /**
  * Block Information for the protocol, adding extra information to the segment.
  */
-public class Block extends Segment implements Writable {
+public class Block extends Segment {
   boolean useReplica;
   String localPath;
 
@@ -36,11 +46,7 @@ public class Block extends Segment implements Writable {
   }
 
   public Segment getSegment() {
-    return super;
-  }
-
-  public String toString() {
-    return super.toString();
+    return new Segment(this.path, this.off, this.len);
   }
 
   //////////////////////////////////////////////////
