@@ -21,17 +21,21 @@ public class Map2Split extends SegmentedSplit {
 
   //A Map2Split can have multiple segments;
   private Segment[] segs;
+  private String[] indices;
   //String[] = hosts[i] represents locations for a segment.
   private String[][] hosts; 
 
   Map2Split() { }
 
   public Map2Split(Segment[] segs) {
-    this(segs, (String[][])null);
+    this(segs, (String[])null, (String[][])null);
   }
 
-  public Map2Split(Segment[] segs, String[][] hosts) {
+  public Map2Split(Segment[] segs, 
+                   String[] indices, 
+                   String[][] hosts) {
     this.segs = segs;
+    this.indices = indices;
     this.hosts = hosts;
   }
 
@@ -43,6 +47,7 @@ public class Map2Split extends SegmentedSplit {
       ret.append(", ");
     }
     ret.append("]");
+    return ret.toString();
   }
 
   public String[] getLocations() throws IOException {
@@ -69,6 +74,15 @@ public class Map2Split extends SegmentedSplit {
     }
   }
 
+  public String[] getIndices() throws IOException {
+    if (this.segs == null) { 
+      return new String[]{};
+    }
+    else {
+      return this.indices;
+    }
+  }
+
   public String[][] getHosts() throws IOException {
     if (this.hosts == null) {
       return new String[][]{ };
@@ -76,6 +90,14 @@ public class Map2Split extends SegmentedSplit {
     else {
       return this.hosts;
     }
+  }
+
+  public long getLength() {
+    long ret = 0;
+    for (Segment seg : segs) {
+      ret += seg.getLength();
+    }
+    return ret;
   }
 
   //////////////////////////////////////////////////

@@ -3,6 +3,8 @@ package org.apache.hadoop.map2;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +43,6 @@ abstract public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
 
     List<FileStatus> files = listStatus(job);
     IndexedFileReader reader = new IndexedFileReader();
-    NetworkTopology clusterMap = new NetworkTopology();
     for (FileStatus file: files) {
       Path path = file.getPath();
       FileSystem fs = path.getFileSystem(job.getConfiguration());
@@ -53,8 +54,8 @@ abstract public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
         idxList.add(path.toString());
         Segment seg = new Segment(path, 0, length);
         segmentList.add(new Segment[] { seg });
-        int blkIndex = getBlockIndex(blkLocations, 0);
-        segLocMap.put(seg, blkLocations[blkIndex].getHosts());
+        String[] hosts = collectHosts(blkLocations, 0, length);
+        segLocMap.put(seg, hosts);
       }
       else {
         reader.readIndexedFile(fs, path);
@@ -67,8 +68,9 @@ abstract public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
           ArrayList<String> locations = new ArrayList<String>();
           for (Segment seg : segs) {
             long off = seg.getOffset();
-            int blkIndex = getBlockIndex(blkLocations, off);
-            segLocMap.put(seg, blkLocations[blkIndex].getHosts());
+            long len = seg.getLength();
+            String[] hosts = collectHosts(blkLocations, 0, length);
+            segLocMap.put(seg, hosts);
           }
         }
       }
@@ -84,6 +86,51 @@ abstract public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
     return splits;
   }
 
+  private String[] collectHosts(BlockLocation[] blkLocations,
+                                long off, long len) throws IOException {
+    List<BlockLocation> blocks = Arrays.asList(blkLocations);
+    List<String> hosts = new ArrayList<String>();
+    long start = off;
+    long end = start + off;
+    int startIdx = findBlock(blocks, off);
+    int idx = (startIdx > 0) ? startIdx : -(startIdx + 1);
+    while(idx < blocks.size()) {
+      BlockLocation curr = blocks.get(idx);
+      long currStart = curr.getOffset();
+      long currEnd = currStart + curr.getLength();
+      if ((start <= currStart && currEnd <= end) ||
+          (currStart <= start && end <= currEnd)) {
+        hosts.addAll(Arrays.asList(blkLocations[idx].getHosts()));
+      }
+      else {
+        break;
+      }
+      idx ++;
+    }
+    return hosts.toArray(new String[hosts.size()]);
+  }
+
+  private int findBlock(List<BlockLocation> list, long off) {
+    BlockLocation key = new BlockLocation(null, null, off, 1);
+    Comparator<BlockLocation> comp = 
+        new Comparator<BlockLocation>() {
+          //Returns 0 iff a is inside b or b is inside a
+          public int compare(BlockLocation a, BlockLocation b) {
+            long aBeg = a.getOffset();
+            long bBeg = b.getOffset();
+            long aEnd = aBeg + a.getLength();
+            long bEnd = bBeg + b.getLength();
+            if ((aBeg <= bBeg && bEnd <= aEnd) ||
+                (bBeg <= aBeg && aEnd <= bEnd))
+              return 0;
+            if (aBeg < bBeg)
+              return -1;
+            return 1;
+          }
+        };
+    return Collections.binarySearch(list, key, comp);
+  }
+
   protected List<InputSplit> filterAndCombine(
       JobContext job, 
       List<String> idxList, List<Segment[]> segmentList, 
@@ -95,11 +142,18 @@ abstract public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
         if (filter.accept(idxList.get(i), idxList.get(j))) {
           Segment[] segs = combineArray(
               segmentList.get(i), segmentList.get(j));
+          String[] indices = new String[segs.length];
+          for (int k = 0; k < segmentList.get(i).length; ++k) {
+            indices[k] = idxList.get(i);
+          }
+          for (int k = 0; k < segmentList.get(j).length; ++k) {
+            indices[k + segmentList.get(i).length] = idxList.get(j);
+          }
           String[][] hosts = new String[segs.length][];
           for (int k = 0; k < segs.length; ++k) {
               hosts[k] = segLocMap.get(segs[k]);
           }
-          Map2Split split = new Map2Split(segs, hosts);
+          Map2Split split = new Map2Split(segs, indices, hosts);
           splits.add(split);
         }
       }
