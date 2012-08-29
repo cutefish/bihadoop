@@ -79,7 +79,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       deleteDirFiles(path);
     }
     LOG.info("Making block cacahe dir at " + localCacheDir);
-    if (!path.mkdir()) {
+    if (!path.mkdirs()) {
       throw new IOException(
           "Cannot set local cache dir at " + localCacheDir);
     }
@@ -177,7 +177,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     BlockLocation getLocation(long off) throws IOException {
       int index = findBlock(blocks, off);
       //already cached
-      if (index >= 0) return blocks.get(0);
+      if (index >= 0) return blocks.get(index);
       //cache with prefetch
       index = -(index + 1);
       List<BlockLocation> newBlocks = new ArrayList<BlockLocation>(
@@ -260,8 +260,10 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       FileSystem fs;
       synchronized(fsCache) {
         fs = fsCache.get(fsUri);
-        if (fs == null)
-          fsCache.put(fsUri, FileSystem.get(fsUri, conf));
+        if (fs == null) {
+          fs = FileSystem.get(fsUri, conf);
+          fsCache.put(fsUri, fs);
+        }
       }
       synchronized(pathCache) {
         if (pathCache.get(path) == null) {
@@ -387,11 +389,19 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       synchronized Block get(Path path, long pos) {
         Block key = new Block(path, pos, 1, false, "");
         List<Block> blocks = fileBlockLists.get(path);
+        if (blocks == null) {
+          blocks = new LinkedList<Block>();
+          fileBlockLists.put(path, blocks);
+          return null;
+        }
         int targetIndex = Collections.binarySearch(blocks, key);
         //targetIndex is less than zero for sure.
         targetIndex = -(targetIndex + 1);
-        Block cached = fileBlockLists.get(path).get(targetIndex);
-        if (key.equals(cached)) return cached;
+        if (targetIndex == blocks.size()) targetIndex = blocks.size() - 1;
+        Block cached = blocks.get(targetIndex);
+        long start = cached.getOffset();
+        long end = start + cached.getLength();
+        if (start <= pos && pos < end) return cached;
         else return null;
       }
 
@@ -468,6 +478,11 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
 
   public Block cacheBlockAt(String fsUriStr, String user, 
                             String pathStr, long pos) throws IOException {
+    LOG.debug("Caching block at" + 
+              " user: " + user + 
+              " fs: " + fsUriStr + 
+              " path: " + pathStr + 
+              " pos: " + pos);
     //normalize a path
     URI fsUri, pathUri;
     try {
@@ -484,7 +499,10 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     //search cache
     Block block = cache.get(user, path, pos);
     //already cached
-    if (block != null) return block;
+    if (block != null) {
+      LOG.debug("Block already exists");
+      return waitOrConstructBlock(false, block, null, user);
+    }
     //not cached, try to cache it
     PathInfo info = cache.get(path);
     if (info == null) {
@@ -495,23 +513,39 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     //deal with eof
     if (pos >= file.getLen()) 
       return new Block(path, -1, -1, false, "");
-
+    LOG.debug("Caching file size: " + file.getLen());
     //try to see if the block can be local
     //if local just return the block
     BlockLocation loc = info.getLocation(pos);
     String[] names = loc.getNames();
     String host = "";
     if (names.length > 0) host = names[0];
+    LOG.debug("File location: " + host);
     InetSocketAddress bestAddr = NetUtils.createSocketAddr(host);
     boolean isLocal = isLocalAddress(bestAddr);
     //put into cache
     long off = loc.getOffset();
     long len = loc.getLength();
     boolean first = cache.put(user, path, off, len, isLocal);
+    LOG.info("Cached block at: " + 
+              " user: " + user + 
+              " path: " + path + 
+              " off: " + off + 
+              " len: " + len + 
+              " isLocal: " + isLocal);
     block = cache.get(user, path, off);
     if (isLocal) return block;
+    //caching remote block
+    return waitOrConstructBlock(first, block, info, user);
+  }
+
+  private Block waitOrConstructBlock(
+      boolean first, Block block, 
+      PathInfo info, String user) throws IOException{
     //if not local and we are the first to put it there we are responsible to
     //cache it.
+    long off = block.getOffset();
+    long len = block.getLength();
     if (first) {
       synchronized(block) {
         String localPath = createLocalPath(user, block);
@@ -529,7 +563,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
         int n = 0;
         info.in.seek(off);
         while(bytesRead < len) {
-          n = info.in.read(buffer, 0, (int)(len - bytesRead));
+          n = info.in.read(buffer);
           out.write(buffer, 0, n);
           bytesRead += n;
         }
@@ -538,9 +572,12 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
         block.setLocalPath(localPath);
         block.notifyAll();
       }
+      LOG.info("Block constructed at" + 
+                " local path: " + block.getLocalPath());
       return block;
     }
     else {
+      if (block.shouldUseReplica()) return block;
       synchronized(block) {
         try {
           while(block.getLocalPath().equals("")) {

@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.hadoop.fs.Segment;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableFactory;
 import org.apache.hadoop.io.WritableFactories;
@@ -116,13 +117,17 @@ public class Map2Split extends SegmentedSplit {
     out.writeInt(segs.length);
     for (int i = 0; i < segs.length; ++i) {
       segs[i].write(out);
+      Text.writeString(out, indices[i]);
     }
   }
 
   public void readFields(DataInput in) throws IOException {
     int num = in.readInt();
+    segs = new Segment[num];
+    indices = new String[num];
     for (int i = 0; i < num; ++i) {
       segs[i].readFields(in);
+      indices[i] = Text.readString(in);
     }
   }
 

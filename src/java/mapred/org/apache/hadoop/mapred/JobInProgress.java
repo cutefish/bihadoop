@@ -2327,8 +2327,8 @@ public class JobInProgress {
 
     //Added by xyu40
     //use map2 packing 
-    int tipIdx = getMapTaskFromPack(tts, clusterSize);
-    if (0 <= tipIdx && tipIdx <= numMapTasks) return tipIdx;
+    tip = findMapTaskFromPack(tts, clusterSize);
+    if (tip != null) return tip.getIdWithinJob();
     //end xyu40
     
     //
@@ -2483,8 +2483,24 @@ public class JobInProgress {
     return -1;
   }
 
-  private int getMapTaskFromPack(TaskTrackerStatus tts,
-                                 int clusterSize) {
+  //Added by xyu40@gatech.edu
+  private TaskInProgress findMapTaskFromPack(TaskTrackerStatus tts,
+                                             int clusterSize) {
+    while(true) {
+      TaskInProgress tip = getNextFromPack(tts, clusterSize);
+      if (tip == null) {
+        //this means either something wrong with the packer
+        //or no pack can be constructed for this tt.
+        return null;
+      }
+      if (tip.isRunnable() && !tip.isRunning()) {
+        return tip;
+      }
+    }
+  }
+
+  private TaskInProgress getNextFromPack(TaskTrackerStatus tts,
+                                         int clusterSize) {
     String host = tts.getHost();
     Segment[] task = null;
     while (task == null) {
@@ -2525,9 +2541,15 @@ public class JobInProgress {
         memoryPackCache.remove(host);
       }
     }
-    if (task == null) return -1;
-    return map2Info.getTaskIndex(task[0], task[1]);
+    if (task == null) return null;
+    int index = map2Info.getTaskIndex(task[0], task[1]);
+    if (index < 0 || index >= maps.length) {
+      LOG.error("Invalid index, something wrong with packer");
+      return null;
+    }
+    return maps[index];
   }
+  //end xyu40@gatech.edu
 
   /**
    * Find new reduce task

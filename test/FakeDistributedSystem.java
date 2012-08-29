@@ -11,11 +11,12 @@ import java.util.Set;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.util.StringUtils;
 
-import org.apache.hadoop.mapred.map2.IndexedSplit;
-import org.apache.hadoop.mapred.map2.Map2SplitMetaInfo;
-import org.apache.hadoop.mapred.map2.MapTaskPacker;
-import org.apache.hadoop.mapred.map2.MapTaskPacker.Pack;
+import org.apache.hadoop.fs.Segment;
+import org.apache.hadoop.fs.Segments;
+import org.apache.hadoop.map2.MapTaskPacker;
+import org.apache.hadoop.map2.MapTaskPacker.Pack;
 
 /* FakeDistributedSystem.java
  */
@@ -29,7 +30,7 @@ public class FakeDistributedSystem {
   private int numOfNodes;
   private int numOfReplicas;
   private FakeNode[] nodes;
-  private Map<IndexedSplit, LinkedList<Integer>> locationCache;
+  private Map<Segment, LinkedList<Integer>> locationCache;
 
   public FakeDistributedSystem(Configuration conf) {
     this.conf = conf;
@@ -41,19 +42,19 @@ public class FakeDistributedSystem {
 
     private long diskCapacity;
     private long memoryCapacity;
-    private Set<IndexedSplit> staticSplits;
-    private Set<IndexedSplit> dynamicSplits;
+    private Set<Segment> staticSplits;
+    private Set<Segment> dynamicSplits;
 
     public FakeNode(int id) {
       nodeId = id;
       this.diskCapacity = conf.getLong("node.disk.capacity", 16000);
       this.memoryCapacity = conf.getLong("node.memory.capacity", 1700);
       final long cacheSize = diskCapacity / conf.getInt("split.block.size", 64);
-      staticSplits = new HashSet<IndexedSplit>();
+      staticSplits = new HashSet<Segment>();
       dynamicSplits = Collections.newSetFromMap(
-          new LinkedHashMap<IndexedSplit, Boolean>() {
+          new LinkedHashMap<Segment, Boolean>() {
           protected boolean removeEldestEntry(
-              Map.Entry<IndexedSplit, Boolean> eldest) {
+              Map.Entry<Segment, Boolean> eldest) {
           return size() > cacheSize;
           }
           });
@@ -75,27 +76,27 @@ public class FakeDistributedSystem {
       return memoryCapacity;
     }
 
-    public Set<IndexedSplit> getStaticSplits() {
+    public Set<Segment> getStaticSplits() {
       return staticSplits;
     }
 
-    public Set<IndexedSplit> getDynamicSplits() {
+    public Set<Segment> getDynamicSplits() {
       return dynamicSplits;
     }
 
-    public void addStaticSplit(IndexedSplit s) {
+    public void addStaticSplit(Segment s) {
       staticSplits.add(s);
     }
 
-    public void addDynamicSplit(IndexedSplit s) {
+    public void addDynamicSplit(Segment s) {
       dynamicSplits.add(s);
     }
 
-    public boolean hasInStatic(IndexedSplit s) {
+    public boolean hasInStatic(Segment s) {
       return staticSplits.contains(s);
     }
 
-    public boolean hasInDynamic(IndexedSplit s) {
+    public boolean hasInDynamic(Segment s) {
       return dynamicSplits.contains(s);
     }
 
@@ -107,14 +108,51 @@ public class FakeDistributedSystem {
       return localToString(dynamicSplits);
     }
 
-    private String localToString(Set<IndexedSplit> splitSet) {
+    private String localToString(Set<Segment> segs) {
       StringBuilder ret = new StringBuilder();
-      ret.append("[" + splitSet.size() + ": ");
-      for (IndexedSplit split : splitSet) {
-        ret.append(split.getIndex() + ", ");
+      ret.append("[" + segs.size() + ": ");
+      for (Segment seg : segs) {
+        ret.append(seg.toString() + ", ");
       }
       ret.append("]");
       return ret.toString();
+    }
+  }
+
+  public static class SegmentPair {
+
+    Segment seg0;
+    Segment seg1;
+    
+    public SegmentPair(Segment s0, Segment s1) {
+      if (s0.compareTo(s1) < 0) {
+        seg0 = s0;
+        seg1 = s1;
+      }
+      else {
+        seg1 = s0;
+        seg0 = s1;
+      }
+    }
+
+    static boolean isEqual(Object a, Object b) {
+      return a == b || (a != null & a.equals(b));
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (this == obj) return true;
+      if (obj != null && obj instanceof SegmentPair) {
+        SegmentPair that = (SegmentPair)obj;
+        return isEqual(this.seg0, that.seg0)
+            && (this.seg1 == that.seg1);
+      }
+      return false;
+    }
+
+    @Override
+    public int hashCode() {
+      return seg0.hashCode() + seg1.hashCode();
     }
   }
 
@@ -127,10 +165,10 @@ public class FakeDistributedSystem {
       FakeNode n = this.new FakeNode(i);
       nodes[i] = n;
     }
-    locationCache = new HashMap<IndexedSplit, LinkedList<Integer>>();
+    locationCache = new HashMap<Segment, LinkedList<Integer>>();
   }
 
-  private void createSplit(IndexedSplit s) {
+  private void createSplit(Segment s) {
     if (locationCache.get(s) != null) return;
     Random r = new Random();
     LinkedList<Integer> locationList = new LinkedList<Integer>();
@@ -142,7 +180,7 @@ public class FakeDistributedSystem {
     locationCache.put(s, locationList);
   }
 
-  private void cacheAt(IndexedSplit s, int nodeId) {
+  private void cacheAt(Segment s, int nodeId) {
     if(!nodes[nodeId].hasInStatic(s))
       nodes[nodeId].addDynamicSplit(s);
   }
@@ -155,7 +193,7 @@ public class FakeDistributedSystem {
     LOG.info("submitted job");
     job.init();
     LOG.info("number of tasks: " + job.getNumTasks());
-    for (IndexedSplit split : job.getSplits()) {
+    for (Segment split : job.getSplits()) {
       createSplit(split);
     }
   }
@@ -167,14 +205,14 @@ public class FakeDistributedSystem {
 
     Map<Integer, Pack> memoryPackCache = new HashMap<Integer, Pack>();
     Map<Integer, Pack> diskPackCache = new HashMap<Integer, Pack>();
-    MapTaskPacker packer = new MapTaskPacker();
-    packer.init(job.getTaskList(), nodes.length);
+    MapTaskPacker packer = new MapTaskPacker(conf);
+    packer.init(job.getTaskList());
     if (packer.numGroups() > 4) {
       LOG.info(packer.groupsToString());
     }
 
-    Map<Map2SplitMetaInfo, Integer> scheduledTasks = 
-        new HashMap<Map2SplitMetaInfo, Integer>();
+    Map<SegmentPair, Integer> scheduledTasks = 
+        new HashMap<SegmentPair, Integer>();
 
     LOG.info("finished initialization");
 
@@ -183,66 +221,78 @@ public class FakeDistributedSystem {
       Random r = new Random();
       int nodeIndex = r.nextInt(nodes.length);
       FakeNode node = getNode(nodeIndex);
-      LOG.info("node #" + nodeIndex + " asking for task");
-      LOG.info("Node local: \n" + 
+      LOG.debug("node #" + nodeIndex + " asking for task");
+      LOG.debug("Node local: \n" + 
                "static: " + node.staticLocalToString() + "\n" + 
                "dynamic: " + node.dynamicLocalToString() + "\n");
 
       //get a task
-      IndexedSplit[] task = null;
-      boolean noTaskForNode = false;
-      while ((task == null) && (!noTaskForNode)) {
+      Segment[] task = null;
+      while (task == null) {
         Pack memoryPack = memoryPackCache.get(nodeIndex);
         if (memoryPack == null) {
-          LOG.info("Node: " + nodeIndex + " no memory pack available\n");
+          LOG.debug("Node: " + nodeIndex + " no memory pack available\n");
           Pack diskPack = diskPackCache.get(nodeIndex);
           if (diskPack == null) {
-            LOG.info("Node: " + nodeIndex + " no disk pack available\n");
-            diskPack = packer.obtainLastLevelPack(node.getStaticSplits(),
-                                                  node.getDynamicSplits(),
-                                                  node.getDiskCapacity());
+            LOG.debug("Node: " + nodeIndex + " no disk pack available\n");
+            try {
+              diskPack = packer.obtainLastLevelPack(
+                  new Segments(node.getStaticSplits()),
+                  new Segments(node.getDynamicSplits()),
+                  node.getDiskCapacity(),
+                  nodes.length);
+            }
+            catch (Exception e) {
+              LOG.error("Exception: " + StringUtils.stringifyException(e));
+              System.exit(-1);
+            }
             if (diskPack == null) {
-              LOG.info("Node: " + nodeIndex + 
+              LOG.debug("Node: " + nodeIndex + 
                        " cannot get a disk level pack\n");
-              noTaskForNode = true;
-              continue;
+              break;
             }
             diskPackCache.put(nodeIndex, diskPack);
-            LOG.info("Node: " + nodeIndex + '\n' + 
+            LOG.debug("Node: " + nodeIndex + '\n' + 
                      "Level: " + "disk" + '\n' +
                      "Pack: " + '\n' + diskPack.toString() + '\n');
           }
-          memoryPack = packer.obtainSubpack(diskPack, 
-                                            node.getMemoryCapacity());
+          try {
+            memoryPack = packer.obtainSubpack(diskPack, 
+                                              node.getMemoryCapacity());
+          }
+          catch (Exception e) {
+            LOG.error("Exception: " + StringUtils.stringifyException(e));
+            System.exit(-1);
+          }
           if (memoryPack == null) {
-            LOG.info("Node: " + nodeIndex + " finished a disk pack\n");
+            LOG.debug("Node: " + nodeIndex + " finished a disk pack\n");
             diskPackCache.remove(nodeIndex);
             continue;
           }
-          LOG.info("Node: " + nodeIndex + '\n' + 
+          LOG.debug("Node: " + nodeIndex + '\n' + 
                    "Level: " + "memory" + '\n' +
                    "Pack: " + '\n' + memoryPack.toString() + '\n');
           memoryPackCache.put(nodeIndex, memoryPack);
         }
         task = memoryPack.getNext();
         if (task == null) {
-          LOG.info("Node: " + nodeIndex + " finished a memory pack\n");
+          LOG.debug("Node: " + nodeIndex + " finished a memory pack\n");
           memoryPackCache.remove(nodeIndex);
         }
       }
 
       if (task != null) {
-        Map2SplitMetaInfo info = new Map2SplitMetaInfo(task[0], task[1]);
+        SegmentPair info = new SegmentPair(task[0], task[1]);
         if (scheduledTasks.containsKey(info)) {
-          LOG.info("Already exist\ntask: " + info.toString() +
+          LOG.error("Already exist\ntask: " + info.toString() +
                    "\nnode: " + scheduledTasks.get(info));
           System.exit(-1);
         }
         scheduledTasks.put(info, nodeIndex);
 
-        LOG.info("Node: " + nodeIndex + " working on: \n" + 
-                  "split: " + task[0].getIndex() + '\n' + 
-                  "split: " + task[1].getIndex() + '\n');
+        LOG.debug("Node: " + nodeIndex + " working on: \n" + 
+                  "split: " + task[0].toString() + '\n' + 
+                  "split: " + task[1].toString() + '\n');
         if (node.hasInStatic(task[0]) || node.hasInDynamic(task[0]))
           hit ++;
         else
@@ -269,7 +319,7 @@ public class FakeDistributedSystem {
   }
 
   private void runJobRandom(FakeJob job) {
-    LinkedList<IndexedSplit[]> taskList = new LinkedList<IndexedSplit[]>(
+    LinkedList<Segment[]> taskList = new LinkedList<Segment[]>(
         job.getTaskList());
 
     int hit = 0;
@@ -279,7 +329,7 @@ public class FakeDistributedSystem {
       Random r = new Random();
       int nodeIndex = r.nextInt(nodes.length);
       FakeNode node = getNode(nodeIndex);
-      IndexedSplit[] task = taskList.pop();
+      Segment[] task = taskList.pop();
       if (node.hasInStatic(task[0]) || node.hasInDynamic(task[0]))
         hit ++;
       else
@@ -294,23 +344,23 @@ public class FakeDistributedSystem {
   }
 
   private void runJobLocality1(FakeJob job) {
-    Map<Integer, LinkedList<IndexedSplit[]>> taskCache =
-        new HashMap<Integer, LinkedList<IndexedSplit[]>>();
+    Map<Integer, LinkedList<Segment[]>> taskCache =
+        new HashMap<Integer, LinkedList<Segment[]>>();
 
-    for (IndexedSplit[] pair : job.getTaskList()) {
+    for (Segment[] pair : job.getTaskList()) {
       List<Integer> locations = locationCache.get(pair[0]);
       for (int i : locations) {
-        LinkedList<IndexedSplit[]> tasks = taskCache.get(i);
+        LinkedList<Segment[]> tasks = taskCache.get(i);
         if (tasks == null) {
-          tasks = new LinkedList<IndexedSplit[]>();
+          tasks = new LinkedList<Segment[]>();
           taskCache.put(i, tasks);
         }
         tasks.add(pair);
       }
     }
 
-    Map<Map2SplitMetaInfo, Integer> scheduledTasks = 
-        new HashMap<Map2SplitMetaInfo, Integer>();
+    Map<SegmentPair, Integer> scheduledTasks = 
+        new HashMap<SegmentPair, Integer>();
 
 
     int finishedMaps = 0;
@@ -321,13 +371,13 @@ public class FakeDistributedSystem {
       Random r = new Random();
       int nodeIndex = r.nextInt(nodes.length);
       FakeNode node = getNode(nodeIndex);
-      LinkedList<IndexedSplit[]> tasks = taskCache.get(nodeIndex);
-      IndexedSplit[] task = null;
+      LinkedList<Segment[]> tasks = taskCache.get(nodeIndex);
+      Segment[] task = null;
       if (!tasks.isEmpty()) {
         task = tasks.pop();
       }
       if (task != null) {
-        Map2SplitMetaInfo info = new Map2SplitMetaInfo(task[0], task[1]);
+        SegmentPair info = new SegmentPair(task[0], task[1]);
         if (!scheduledTasks.containsKey(info)) {
           scheduledTasks.put(info, nodeIndex);
           finishedMaps ++;

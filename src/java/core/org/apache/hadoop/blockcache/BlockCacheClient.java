@@ -40,6 +40,7 @@ public class BlockCacheClient implements java.io.Closeable {
 
   public FSDataInputStream open(Path f, int bufferSize, 
                                 FileSystem fs) throws IOException {
+    LOG.debug("openning FSDataInputStream for path: " + f);
     return new FSDataInputStream(new CachedFSInputStream(f, bufferSize, fs));
   }
 
@@ -76,6 +77,7 @@ public class BlockCacheClient implements java.io.Closeable {
       this.src = f;
       this.fs = fs;
       this.backupIn = fs.getInputStream(f, bufferSize);
+      LOG.debug("opened CachedFSInputStream");
     }
 
     @Override
@@ -125,7 +127,10 @@ public class BlockCacheClient implements java.io.Closeable {
               try {
                 n = localIn.read(buf, off, maxLength);
                 pos += n;
-                if (n < 0) throw new IOException("Unexpected eof");
+                if (n < 0) 
+                  throw new IOException("Unexpected eof:" + 
+                                        " pos: " + pos + 
+                                        " blockEnd: " + blockEnd);
                 LOG.debug("Read cache local");
                 return n;
               }
@@ -161,6 +166,7 @@ public class BlockCacheClient implements java.io.Closeable {
       //we are here because we failed again during or after state update
       //just use back up stream for one block
       //this is very inefficient(high latency), but we expect it is rare.
+      LOG.debug("Reading using remote stream");
       FileStatus file = fs.getFileStatus(src);
       if (pos >= file.getLen()) return -1;
       BlockLocation[] blocks = fs.getFileBlockLocations(file, pos, 1);
@@ -179,18 +185,22 @@ public class BlockCacheClient implements java.io.Closeable {
       backupIn.seek(pos);
       n = backupIn.read(buf, off, maxLength);
       pos += n;
+      LOG.debug("Finish reading");
       return n;
     }
 
     private void updateState() throws IOException {
+      LOG.debug("Updating status");
       Block block = server.cacheBlockAt(fs.getUri().toString(),
                                         ugi.getUserName(),
                                         src.toUri().toString(), pos);
+      LOG.debug("Cached block returned");
       blockStart = block.getOffset();
       blockEnd = blockStart + block.getLength();
 
       if (blockStart == -1) {
         //we reach eof
+        LOG.debug("Encountered EOF");
         state = ReadState.EOF;
         return; 
       }
@@ -199,6 +209,7 @@ public class BlockCacheClient implements java.io.Closeable {
         //server suggests using replica, so we fall back to original method
         //it is not necessary that the backupIn will read from the local
         //node, however, it is highly likely that it does so.
+        LOG.debug("Server suggests local read using replica");
         backupIn.seek(pos);
         state = ReadState.REPLICA;
         return;
@@ -206,6 +217,7 @@ public class BlockCacheClient implements java.io.Closeable {
 
       //here, server has already cached the block for us
       String localPath = block.getLocalPath();
+      LOG.debug("Server cached block at: " + localPath);
       localIn = new FileInputStream(localPath);
       localIn.skip(pos - blockStart);
       state = ReadState.CACHE;
@@ -214,6 +226,7 @@ public class BlockCacheClient implements java.io.Closeable {
 
     @Override
     public synchronized void seek(long pos) throws IOException {
+      LOG.debug("seeking position: " + pos);
       if (blockStart <= pos && pos < blockEnd) {
         try {
           if (state == ReadState.REPLICA) {
@@ -239,7 +252,7 @@ public class BlockCacheClient implements java.io.Closeable {
       //set state to remote and let the next read deal with the real reads.
       state = ReadState.REMOTE;
       this.pos = pos;
-      localIn.close();
+      if (localIn != null) localIn.close();
       localIn = null;
     }
 

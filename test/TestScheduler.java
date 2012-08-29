@@ -4,8 +4,9 @@ import java.util.ArrayList;
 
 import org.apache.hadoop.conf.Configuration;
 
-import org.apache.hadoop.mapred.map2.IndexedSplit;
-import org.apache.hadoop.mapred.map2.Map2Filter;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.Segment;
+import org.apache.hadoop.map2.Map2Filter;
 
 class TestScheduler {
 
@@ -24,9 +25,9 @@ class TestScheduler {
   static class AllPairJob extends TestJobWrapper {
 
     static class AllPairFilter implements Map2Filter {
-      public boolean accept(IndexedSplit s0, IndexedSplit s1) {
-        return ((s0.getIndex().contains("split0")) &&
-                (s1.getIndex().contains("split1")));
+      public boolean accept(String s0, String s1) {
+        return ((s0.contains("split0")) &&
+                (s1.contains("split1")));
       }
     }
 
@@ -36,12 +37,14 @@ class TestScheduler {
       long blockSize = conf.getInt("split.block.size", 64);
       int numSplit0 = conf.getInt("allpair.num.split0", 100);
       int numSplit1 = conf.getInt("allpair.num.split1", 200);
-      List<IndexedSplit> splitList = new ArrayList<IndexedSplit>();
+      List<Segment> splitList = new ArrayList<Segment>();
       for (int i = 0; i < numSplit0; ++i) {
-        splitList.add(new IndexedSplit("allpair.split0." + i, blockSize));
+        splitList.add(
+            new Segment(new Path("allpair.split0"), i*blockSize, blockSize));
       }
       for (int i = 0; i < numSplit1; ++i) {
-        splitList.add(new IndexedSplit("allpair.split1." + i, blockSize));
+        splitList.add(
+            new Segment(new Path("allpair.split1"), i*blockSize, blockSize));
       }
       job.setSplits(splitList);
     }
@@ -51,7 +54,7 @@ class TestScheduler {
   static class AllPairDiagJob extends TestJobWrapper {
 
     static class AllPairDiagFilter implements Map2Filter {
-      public boolean accept(IndexedSplit s0, IndexedSplit s1) {
+      public boolean accept(String s0, String s1) {
         return true;
       }
     }
@@ -61,9 +64,10 @@ class TestScheduler {
       job.setFilter(new AllPairDiagFilter());
       long blockSize = conf.getInt("split.block.size", 64);
       int numSplit0 = conf.getInt("allpairdiag.num.split", 100);
-      List<IndexedSplit> splitList = new ArrayList<IndexedSplit>();
+      List<Segment> splitList = new ArrayList<Segment>();
       for (int i = 0; i < numSplit0; ++i) {
-        splitList.add(new IndexedSplit("allpair.split." + i, blockSize));
+        splitList.add(
+            new Segment(new Path("allpair.split"), i*blockSize, blockSize));
       }
       job.setSplits(splitList);
     }
@@ -72,18 +76,24 @@ class TestScheduler {
 
   static class MatMatMultJob extends TestJobWrapper {
 
-    class MatMatMultFilter implements Map2Filter {
-      public boolean accept(IndexedSplit s0, IndexedSplit s1) {
-        String[] nameArray0 = s0.getIndex().split("\\.");
-        String[] nameArray1 = s1.getIndex().split("\\.");
-        String matName0 = nameArray0[2];
-        int row0 = Integer.parseInt(nameArray0[3]);
-        int col0 = Integer.parseInt(nameArray0[4]);
-        String matName1 = nameArray1[2];
-        int row1 = Integer.parseInt(nameArray1[3]);
-        int col1 = Integer.parseInt(nameArray1[4]);
-        if ((matName0.equals("A")) && 
-            (matName1.equals("B")) &&
+    protected int numARowBlock;
+    protected int numAColBlock;
+    protected int numBRowBlock;
+    protected int numBColBlock;
+
+    public class MatMatMultFilter implements Map2Filter {
+      public boolean accept(String s0, String s1) {
+        Segment seg0 = Segment.parseSegment(s0);
+        Segment seg1 = Segment.parseSegment(s1);
+        String path0 = seg0.getPath().toString();
+        String path1 = seg1.getPath().toString();
+        long off0 = seg0.getOffset();
+        long off1 = seg1.getOffset();
+        long len = seg0.getLength();
+        int col0 = (int) (off0 / len % numARowBlock);
+        int row1 = (int) (off1 / len / numBRowBlock);
+        if ((path0.contains("A")) && 
+            (path1.contains("B")) &&
             (col0 == row1)) {
           return true;
         }
@@ -95,79 +105,62 @@ class TestScheduler {
       job = new FakeJob();
       job.setFilter(new MatMatMultFilter());
       long blockSize = conf.getInt("split.block.size", 64);
-      int numSplitARow = conf.getInt("matmatmult.num.split.A.row", 4);
-      int numSplitACol = conf.getInt("matmatmult.num.split.A.col", 8);
-      int numSplitBRow = conf.getInt("matmatmult.num.split.B.row", 8);
-      int numSplitBCol = conf.getInt("matmatmult.num.split.B.col", 8);
-      List<IndexedSplit> splitList = new ArrayList<IndexedSplit>();
-      System.out.println("A: " + numSplitARow + " * " + numSplitACol);
-      System.out.println("B: " + numSplitBRow + " * " + numSplitBCol);
-      for (int i = 0; i < numSplitARow; ++i) {
-        for (int j = 0; j < numSplitACol; ++j) {
-          splitList.add(new IndexedSplit("matmatmul.split." + 
-                                         "A." + i + "." + j, blockSize));
+      numARowBlock = conf.getInt("matmatmult.num.split.A.row", 4);
+      numAColBlock = conf.getInt("matmatmult.num.split.A.col", 8);
+      numBRowBlock = conf.getInt("matmatmult.num.split.B.row", 8);
+      numBColBlock = conf.getInt("matmatmult.num.split.B.col", 8);
+      List<Segment> splitList = new ArrayList<Segment>();
+      System.out.println("A: " + numARowBlock + " * " + numAColBlock);
+      System.out.println("B: " + numBRowBlock + " * " + numBColBlock);
+      for (int i = 0; i < numARowBlock; ++i) {
+        for (int j = 0; j < numAColBlock; ++j) {
+          String name = "mm.A.row" + i + ".col" + j;
+          long off = (i * numARowBlock + j) * blockSize;
+          long len = blockSize;
+          splitList.add(new Segment(new Path(name), off, len));
         }
       }
-      for (int i = 0; i < numSplitBRow; ++i) {
-        for (int j = 0; j < numSplitBCol; ++j) {
-          splitList.add(new IndexedSplit("matmatmul.split." + 
-                                         "B." + i + "." + j, blockSize));
+      for (int i = 0; i < numBRowBlock; ++i) {
+        for (int j = 0; j < numBColBlock; ++j) {
+          String name = "mm.B.row" + i + ".col" + j;
+          long off = (i * numARowBlock + j) * blockSize;
+          long len = blockSize;
+          splitList.add(new Segment(new Path(name), off, len));
         }
       }
       job.setSplits(splitList);
     }
-
-
   }
 
-  static class MatVecMultJob extends TestJobWrapper {
+  static class MatVecMultJob extends MatMatMultJob {
 
     private int numIteration = 0;
-    long blockSize;
-    int numSplitMRow;
-    int numSplitMCol;
-    int numSplitVRow;
-
-    class MatVecMultFilter implements Map2Filter {
-      public boolean accept(IndexedSplit s0, IndexedSplit s1) {
-        String[] nameArray0 = s0.getIndex().split("\\.");
-        String[] nameArray1 = s1.getIndex().split("\\.");
-        String matName0 = nameArray0[2];
-        int row0 = Integer.parseInt(nameArray0[3]);
-        int col0;
-        if (nameArray0.length >=5) 
-          col0 = Integer.parseInt(nameArray0[4]);
-        else
-          col0 = -1;
-        String matName1 = nameArray1[2];
-        int row1 = Integer.parseInt(nameArray1[3]);
-        if ((matName0.equals("M")) && 
-            (matName1.startsWith("V")) &&
-            (col0 == row1)) {
-          return true;
-        }
-        return false;
-      }
-    }
+    private int blockSize = 0;
 
     MatVecMultJob(Configuration conf) {
+      super(conf);
       job = new FakeJob();
-      job.setFilter(new MatVecMultFilter());
+      job.setFilter(new MatMatMultFilter());
       blockSize = conf.getInt("split.block.size", 64);
-      numSplitMRow = conf.getInt("matmatmult.num.split.A.row", 4);
-      numSplitMCol = conf.getInt("matmatmult.num.split.A.col", 8);
-      numSplitVRow = conf.getInt("matmatmult.num.split.B.row", 8);
-      List<IndexedSplit> splitList = new ArrayList<IndexedSplit>();
-      for (int i = 0; i < numSplitMRow; ++i) {
-        for (int j = 0; j < numSplitMCol; ++j) {
-          splitList.add(new IndexedSplit("matvecmul.split." + 
-                                         "M." + i + "." + j, blockSize));
+      numARowBlock = conf.getInt("matmatmult.num.split.A.row", 4);
+      numAColBlock = conf.getInt("matmatmult.num.split.A.col", 8);
+      numBRowBlock = conf.getInt("matmatmult.num.split.B.row", 8);
+      List<Segment> splitList = new ArrayList<Segment>();
+      for (int i = 0; i < numARowBlock; ++i) {
+        for (int j = 0; j < numAColBlock; ++j) {
+          String name = "mm.A.row" + i + ".col" + j;
+          long off = (i * numARowBlock + j) * blockSize;
+          long len = blockSize;
+          splitList.add(new Segment(new Path(name), off, len));
         }
       }
-      for (int i = 0; i < numSplitVRow; ++i) {
-        splitList.add(new IndexedSplit("matmatmul.split." + 
-                                       "V" + numIteration + 
-                                       "." + i, blockSize));
+      for (int i = 0; i < numBRowBlock; ++i) {
+        for (int j = 0; j < 1; ++j) {
+          String name = "mm.B." + numIteration + ".row" + i + ".col" + j;
+          long off = (i * numARowBlock + j) * blockSize;
+          long len = blockSize;
+          splitList.add(new Segment(new Path(name), off, len));
+        }
       }
       job.setSplits(splitList);
     }
@@ -175,17 +168,22 @@ class TestScheduler {
     @Override
     public void update() {
       numIteration ++;
-      List<IndexedSplit> splitList = new ArrayList<IndexedSplit>();
-      for (int i = 0; i < numSplitMRow; ++i) {
-        for (int j = 0; j < numSplitMCol; ++j) {
-          splitList.add(new IndexedSplit("matvecmul.split." + 
-                                         "M." + i + "." + j, blockSize));
+      List<Segment> splitList = new ArrayList<Segment>();
+      for (int i = 0; i < numARowBlock; ++i) {
+        for (int j = 0; j < numAColBlock; ++j) {
+          String name = "mm.A.row" + i + ".col" + j;
+          long off = (i * numARowBlock + j) * blockSize;
+          long len = blockSize;
+          splitList.add(new Segment(new Path(name), off, len));
         }
       }
-      for (int i = 0; i < numSplitVRow; ++i) {
-        splitList.add(new IndexedSplit("matmatmul.split." + 
-                                       "V" + numIteration + 
-                                       "." + i, blockSize));
+      for (int i = 0; i < numBRowBlock; ++i) {
+        for (int j = 0; j < 1; ++j) {
+          String name = "mm.B." + numIteration + ".row" + i + ".col" + j;
+          long off = (i * numARowBlock + j) * blockSize;
+          long len = blockSize;
+          splitList.add(new Segment(new Path(name), off, len));
+        }
       }
       job.setSplits(splitList);
     }

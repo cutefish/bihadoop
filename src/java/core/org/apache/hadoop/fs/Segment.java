@@ -65,7 +65,20 @@ public class Segment implements Writable, Comparable<Segment> {
   }
 
   public String toString() {
-    return path.toString() + "#" + off + "-" + len;
+    return path.toString() + "#EOP#" + off + "-" + len;
+  }
+
+  static public Segment parseSegment(String s) {
+    String[] split = s.split("#EOP#");
+    if (split.length != 2) 
+      throw new IllegalArgumentException("Invalid segment string: " + s);
+    Path p = new Path(split[0]);
+    split = split[1].split("-");
+    if (split.length != 2) 
+      throw new IllegalArgumentException("Invalid segment string: " + s);
+    long off = Long.parseLong(split[0]);
+    long len = Long.parseLong(split[1]);
+    return new Segment(p, off, len);
   }
 
   static boolean isEqual(Object a, Object b) {

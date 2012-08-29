@@ -37,11 +37,15 @@ public class TestCachedReadSeq {
       FSDataInputStream in;
       if (!cacheflag) {
         in = fs.open(filePath);
+        System.out.println("opened file");
       }
       else {
+        System.out.println("cache opening");
         in = fs.openCachedReadOnly(filePath);
+        System.out.println("cache opened file");
       }
       in.seek(offset);
+      System.out.println("seeked offset");
 
       int n = 0;
       long bytesRead = 0;

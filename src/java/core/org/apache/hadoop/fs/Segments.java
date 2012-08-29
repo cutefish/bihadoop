@@ -85,6 +85,7 @@ public class Segments implements Writable {
    * overlap portions.
    */
   public CoverInfo cover(int hintStart, int hintEnd, Segment key) {
+    if (thisList.size() == 0) return new CoverInfo(key.getLength(), key);
     if (hintStart < 0) hintStart = 0;
     if (hintEnd > thisList.size()) hintEnd = thisList.size();
     int idx = Collections.binarySearch(
@@ -135,6 +136,9 @@ public class Segments implements Writable {
     List<Segment> thatList = new ArrayList<Segment>(that);
     Collections.sort(thatList);
     List<CoverInfo> ret = new ArrayList<CoverInfo>();
+
+    if (thatList.size() == 0) return ret;
+    if (thisList.size() == 0) return null;
 
     //since both lists are sorted, we can limit the search range.
     int idx;

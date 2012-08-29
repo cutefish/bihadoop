@@ -27,6 +27,7 @@
 
     <property name="conf" value="${basedir}/conf"/>
 
+    <property name="bin.dir" value="${basedir}/bin"/>
     <!--Project classpath-->
     <path id="classpath">
         <pathelement location="${build.classes}"/>
@@ -64,13 +65,13 @@
     </target>
 
     <target name="compile-hdfs-classes" depends="compile-core-classes">
-        <!--<javac
+        <javac
             srcdir="${hdfs.src.dir}"
             includes="org/apache/hadoop/**/*.java"
             destdir="${build.classes}">
             <classpath refid="classpath"/>
             <compilerarg line="${compileopts}"/>
-        </javac>-->
+        </javac>
     </target>
 
     <target name="compile-mapred-classes" depends="compile-hdfs-classes">
@@ -125,6 +126,11 @@
         <copy todir="${external.hadoop.home}/src">
             <fileset dir="${src.dir}">
                 <include name="**/*.java"/>
+            </fileset>
+        </copy>
+        <copy todir="${external.hadoop.home}/bin">
+            <fileset dir="${bin.dir}">
+                <include name="*"/>
             </fileset>
         </copy>
     </target>

@@ -162,6 +162,9 @@ public class MapTaskPacker {
 
     long end = System.currentTimeMillis();
 
+    //LOG.debug(joinTableToString());
+    //LOG.debug(groupsToString());
+
     LOG.info("Number of Groups size: " + groups.size());
     LOG.info("Finished initializing for job in " + (end - start) + " ms.");
   }
@@ -330,7 +333,7 @@ public class MapTaskPacker {
 
     long start = System.currentTimeMillis();
 
-    LOG.info("Generating a last level pack");
+    LOG.debug("Generating a last level pack");
     //no pack if no group.
     if ((groups == null) || (groups.isEmpty())) return null;
 
@@ -368,7 +371,7 @@ public class MapTaskPacker {
     sizeLeft += usableCacheSize / 2;
     List<Segment[]> deleteList = new ArrayList<Segment[]>();
 
-    LOG.info("Start packing");
+    LOG.debug("Start packing");
     //since the cover info in bestGroup is already ordered according to the
     //locality, we can simply pop them out.
     for (CoverInfo info : bestGroup) {
@@ -413,7 +416,7 @@ public class MapTaskPacker {
 
     removePairs(deleteList);
     long end = System.currentTimeMillis();
-    LOG.debug("Finished last level packing in " + (end - start) + " ms " );
+    LOG.info("Finished last level packing in " + (end - start) + " ms " );
     return newPack;
   }
 
@@ -429,7 +432,19 @@ public class MapTaskPacker {
 
     for (List<Segment> group : groups) {
       List<CoverInfo> info = cache.cover(group);
-      allCoverInfo.add(info);
+      if (info != null)
+        allCoverInfo.add(info);
+    }
+
+    if (allCoverInfo.isEmpty()) {
+      //this means there is no cache for any segment
+      //just pick one group and construct the info.
+      List<Segment> group = groups.get(0);
+      List<CoverInfo> info = new ArrayList<CoverInfo>();
+      for (Segment seg : group) {
+        info.add(new CoverInfo(seg.getLength(), seg));
+      }
+      return info;
     }
 
     int maxNum = 0;
@@ -460,9 +475,11 @@ public class MapTaskPacker {
       CoverInfo info = group.get(idx);
       left -= info.leftSize;
       Set<Segment> currSet = joinTable.get(info.segment);
-      if (currSet.size() > chosenSet.size()) {
+      if ((chosenSet == null) || 
+          (currSet.size() > chosenSet.size())) {
         chosenSet = currSet;
       }
+      idx ++;
     }
     return chosenSet;
   }
@@ -475,7 +492,7 @@ public class MapTaskPacker {
   public Pack obtainSubpack(Pack pack, long cacheSize) {
     long start = System.currentTimeMillis();
 
-    LOG.info("Generating a sub pack\n");
+    LOG.debug("Generating a sub pack\n");
 
     if ((pack == null) || (pack.isEmpty())) return null;
 
@@ -501,12 +518,12 @@ public class MapTaskPacker {
     long sizeLeft = usableCacheSize / 2;
     TreeSet<Segment> chosenSet = new TreeSet<Segment>();
     for(Segment seg : largestSet) {
-      if (sizeLeft - seg.getLength() < 0) break;
+      if ((!chosenSet.isEmpty()) && 
+          (sizeLeft - seg.getLength() < 0)) break;
       chosenSet.add(seg);
       chosenSegments.add(seg);
       sizeLeft -= seg.getLength();
     }
-
 
     //choose corresponding tasks
     boolean finished = false;
@@ -520,7 +537,8 @@ public class MapTaskPacker {
           //the first time split appears we should check the size
           //and add it to the cachedSet.
           if (!chosenSegments.contains(seg)) {
-            if (sizeLeft - seg.getLength() < 0) {
+            if (!subPack.isEmpty() && 
+                (sizeLeft - seg.getLength() < 0)) {
               finished = true;
               break;
             }
