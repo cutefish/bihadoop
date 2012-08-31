@@ -46,7 +46,7 @@ public class MatvecPrep extends Configured implements Tool
   //      (c) (0-1 matrix)  ROWID		COLID
   //            =>  BLOCK-ROW		BLOCK-COL		IN-BLOCK-ROW IN-BLOCK-COL VALUE
   //////////////////////////////////////////////////////////////////////
-  public static class MapStage1 extends Mapper<LongWritable, Text, Text, Text>
+  public static class MapStage1 extends Mapper<Object, Text, Text, Text>
   {
     int block_size;
     boolean makesym;
@@ -58,9 +58,10 @@ public class MatvecPrep extends Configured implements Tool
       //System.out.println("MapStage1: block_size = " + block_size + ", matrix_row=" + matrix_row + ", makesym = " + makesym);
     }
 
-    public void map (final LongWritable key, final Text value, 
+    public void map (final Object key, final Text value, 
                      final Context context) 
         throws IOException, InterruptedException {
+
 			String line_text = value.toString();
 			if (line_text.startsWith("#"))				// ignore comments in edge file
 				return;
@@ -154,17 +155,17 @@ public class MatvecPrep extends Configured implements Tool
 			out_prefix = context.getConfiguration().get("out_prefix");
 		}
 
-		public void reduce (final Text key, final Iterator<Text> values, 
+		public void reduce (final Text key, final Iterable<Text> values, 
                         final Context context) 
         throws IOException, InterruptedException {
       String out_value = "";
       ArrayList<String> value_al = new ArrayList<String>();
 
-      while (values.hasNext()) {
+      for (Text val : values) {
         // vector: key=BLOCKID, value= IN-BLOCK-INDEX VALUE
         // matrix: key=BLOCK-ROW		BLOCK-COL, value=IN-BLOCK-ROW IN-BLOCK-COL VALUE
 
-        String value_text = values.next().toString();
+        String value_text = val.toString();
         value_al.add( value_text );
       }
 
@@ -300,8 +301,12 @@ public class MatvecPrep extends Configured implements Tool
       protected <K, V> String generateIndexForKeyValue(
           K key, V value, String path) {
         String keyString = key.toString();
+        System.out.println("key: " + keyString);
+        System.out.println("value: " + value.toString());
+        System.out.println("path: " + path);
         return path + "#blockid#" + keyString;
       }
     }
 }
+
 

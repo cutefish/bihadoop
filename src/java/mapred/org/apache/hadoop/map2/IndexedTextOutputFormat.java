@@ -56,8 +56,6 @@ public abstract class IndexedTextOutputFormat<K, V>
     protected DataOutputStream out;
     protected DataOutputStream indexOut;
     protected String path;
-    protected List<String> indices;
-    protected List<Segment> segments;
     private final byte[] keyValueSeparator;
 
     public LineRecordWriter(DataOutputStream out, DataOutputStream indexOut, 
@@ -70,8 +68,6 @@ public abstract class IndexedTextOutputFormat<K, V>
       this.out = out;
       this.indexOut = indexOut;
       this.path = path;
-      this.indices = new ArrayList<String>();
-      this.segments = new ArrayList<Segment>();
       try {
         this.keyValueSeparator = keyValueSeparator.getBytes(utf8);
       } catch (UnsupportedEncodingException uee) {
@@ -124,9 +120,13 @@ public abstract class IndexedTextOutputFormat<K, V>
       int currSize = out.size();
 
       String index = generateIndexForKeyValue(key, value, path);
+      indexOut.write(IndexingConstants.INDEX_START);
+      Text.writeString(indexOut, index);
       Segment segment = new Segment(new Path(path), prevSize, currSize - prevSize);
-      indices.add(index);
-      segments.add(segment);
+      indexOut.write(IndexingConstants.SEGMENT_START);
+      segment.write(indexOut);
+      indexOut.write(IndexingConstants.SEGMENT_END);
+      indexOut.write(IndexingConstants.INDEX_END);
     }
 
     public synchronized 
@@ -165,15 +165,17 @@ public abstract class IndexedTextOutputFormat<K, V>
     if (!isCompressed) {
       FSDataOutputStream fileOut = fs.create(file, false);
       FSDataOutputStream idxOut = fs.create(idxFile, false);
-      return new LineRecordWriter<K, V>(fileOut, idxOut, 
-                                        file.toString(), keyValueSeparator);
+      return new LineRecordWriter<K, V>(
+          fileOut, idxOut, 
+          new Path(getOutputPath(job), getOutputName(job)).toString(),
+          keyValueSeparator);
     } else {
       FSDataOutputStream fileOut = fs.create(file, false);
       FSDataOutputStream idxOut = fs.create(idxFile, false);
-      return new LineRecordWriter<K, V>(new DataOutputStream
-                                        (codec.createOutputStream(fileOut)),
-                                        idxOut, file.toString(), 
-                                        keyValueSeparator);
+      return new LineRecordWriter<K, V>(
+          new DataOutputStream(codec.createOutputStream(fileOut)), idxOut, 
+          new Path(getOutputPath(job), getOutputName(job)).toString(),
+          keyValueSeparator);
     }
   }
 }
