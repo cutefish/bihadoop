@@ -24,6 +24,7 @@
     <property name="bench.src.dir" value="${basedir}/bench"/>
     <property name="bench.build.dir" value="${build.dir}/bench"/>
     <property name="bench.build.classes" value="${bench.build.dir}/classes"/>
+    <property name="bench.build.jar" value="${bench.build.dir}/Bench.jar"/>
 
     <property name="conf" value="${basedir}/conf"/>
 
@@ -108,6 +109,10 @@
         <copy todir="${bench.build.classes}">
             <fileset dir="${bench.src.dir}" includes="*-conf.xml"/>
         </copy>
+        <jar 
+            destfile="${bench.build.jar}"
+            basedir="${bench.build.classes}"
+        />
     </target>
 
     <target name="compile" depends="compile-test, compile-bench">

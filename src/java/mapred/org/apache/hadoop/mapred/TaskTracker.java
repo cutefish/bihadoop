@@ -1519,13 +1519,14 @@ public class TaskTracker implements MRConstants, TaskUmbilicalProtocol,
 
     //Added by xyu40@gatech.edu
     try {
-      int RPC_TIME_OUT = 10; //10 ms 
+      int RPC_TIME_OUT = 10000; //10s 
       int port = conf.getInt("block.cache.server.port", 
                              BlockCacheProtocol.DEFAULT_SERVER_PORT);
       InetSocketAddress serverAddr = new InetSocketAddress("127.0.0.1", port);
       blockCacheServer = (BlockCacheProtocol)RPC.getProxy(
           BlockCacheProtocol.class, BlockCacheProtocol.versionID,
           serverAddr, conf, RPC_TIME_OUT);
+      LOG.info("Started blockcache client on" + serverAddr);
     }
     catch(IOException e) {
       LOG.error("Block Server RPC Error");
@@ -1877,13 +1878,21 @@ public class TaskTracker implements MRConstants, TaskUmbilicalProtocol,
       }
     }
 
+    //Added by xyu40@gatech.edu
     if (blockCacheServer != null) {
       //only one user in the system.
       //ToDo: complete multiple user system.
-      BlockCacheStatus bcs = blockCacheServer.getStatus(
-          aclsManager.getMROwner().getUserName());
-      status.setBlockCacheStatus(bcs);
+      try {
+        BlockCacheStatus bcs = blockCacheServer.getStatus(
+            aclsManager.getMROwner().getUserName());
+        status.setBlockCacheStatus(bcs);
+      }
+      catch (IOException ioe) {
+        LOG.error("Block server status error: " + 
+                  StringUtils.stringifyException(ioe));
+      }
     }
+    //end xyu40@gatech.edu
 
     //
     // Xmit the heartbeat
@@ -1893,7 +1902,6 @@ public class TaskTracker implements MRConstants, TaskUmbilicalProtocol,
                                                               justInited,
                                                               askForNewTask, 
                                                               heartbeatResponseId);
-      
     //
     // The heartbeat got through successfully!
     //

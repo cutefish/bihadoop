@@ -21,6 +21,8 @@ package org.apache.hadoop.map2;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -31,6 +33,7 @@ import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.compress.CompressionCodec;
 import org.apache.hadoop.io.compress.GzipCodec;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.OutputFormat;
 import org.apache.hadoop.mapreduce.RecordWriter;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
@@ -42,19 +45,13 @@ import org.apache.hadoop.fs.Segment;
 public abstract class IndexedTextOutputFormat<K, V> 
   extends FileOutputFormat<K, V> {
 
-  protected String generateIndexForKeyValue(K key, V value, String path);
+  abstract protected <K, V> String generateIndexForKeyValue(
+      K key, V value, String path);
 
-  protected static class LineRecordWriter<K, V>
+  protected class LineRecordWriter<K, V>
     extends RecordWriter<K, V> {
-    private static final String utf8 = "UTF-8";
-    private static final byte[] newline;
-    static {
-      try {
-        newline = "\n".getBytes(utf8);
-      } catch (UnsupportedEncodingException uee) {
-        throw new IllegalArgumentException("can't find " + utf8 + " encoding");
-      }
-    }
+    private final String utf8 = "UTF-8";
+    private final byte[] newline;
 
     protected DataOutputStream out;
     protected DataOutputStream indexOut;
@@ -65,9 +62,16 @@ public abstract class IndexedTextOutputFormat<K, V>
 
     public LineRecordWriter(DataOutputStream out, DataOutputStream indexOut, 
                             String path, String keyValueSeparator) {
+      try {
+        newline = "\n".getBytes(utf8);
+      } catch (UnsupportedEncodingException uee) {
+        throw new IllegalArgumentException("can't find " + utf8 + " encoding");
+      }
       this.out = out;
       this.indexOut = indexOut;
       this.path = path;
+      this.indices = new ArrayList<String>();
+      this.segments = new ArrayList<Segment>();
       try {
         this.keyValueSeparator = keyValueSeparator.getBytes(utf8);
       } catch (UnsupportedEncodingException uee) {
@@ -121,11 +125,22 @@ public abstract class IndexedTextOutputFormat<K, V>
 
       String index = generateIndexForKeyValue(key, value, path);
       Segment segment = new Segment(new Path(path), prevSize, currSize - prevSize);
+      indices.add(index);
+      segments.add(segment);
     }
 
     public synchronized 
     void close(TaskAttemptContext context) throws IOException {
       out.close();
+      //write index
+      indexOut.writeInt(indices.size());
+      for (int i = 0; i < indices.size(); ++i) {
+        Text.writeString(indexOut, indices.get(i));
+        indexOut.writeInt(1);
+        indexOut.writeLong(segments.get(i).getOffset());
+        indexOut.writeLong(segments.get(i).getLength());
+      }
+      indexOut.close();
     }
   }
 
@@ -145,14 +160,19 @@ public abstract class IndexedTextOutputFormat<K, V>
       extension = codec.getDefaultExtension();
     }
     Path file = getDefaultWorkFile(job, extension);
+    Path idxFile = new Path(file.toString() + ".map2idx");
     FileSystem fs = file.getFileSystem(conf);
     if (!isCompressed) {
       FSDataOutputStream fileOut = fs.create(file, false);
-      return new LineRecordWriter<K, V>(fileOut, keyValueSeparator);
+      FSDataOutputStream idxOut = fs.create(idxFile, false);
+      return new LineRecordWriter<K, V>(fileOut, idxOut, 
+                                        file.toString(), keyValueSeparator);
     } else {
       FSDataOutputStream fileOut = fs.create(file, false);
+      FSDataOutputStream idxOut = fs.create(idxFile, false);
       return new LineRecordWriter<K, V>(new DataOutputStream
                                         (codec.createOutputStream(fileOut)),
+                                        idxOut, file.toString(), 
                                         keyValueSeparator);
     }
   }

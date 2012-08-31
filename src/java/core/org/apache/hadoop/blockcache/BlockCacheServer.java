@@ -311,7 +311,10 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     }
 
     Segments getSegments(String user) {
-      return blockCache.get(user).getCachedSegments();
+      CachedBlocks blocks = blockCache.get(user);
+      if (blocks == null) return new Segments(
+          new ArrayList<Segment>(0));
+      return blocks.getCachedSegments();
     }
 
     /**
@@ -646,9 +649,10 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   }
 
   public BlockCacheStatus getStatus(String user) throws IOException {
-    return new BlockCacheStatus(cache.getSegments(user),
-                                diskCacheSizePerUser,
-                                memCacheSizePerUser);
+    BlockCacheStatus status = new BlockCacheStatus(cache.getSegments(user),
+                                                   diskCacheSizePerUser,
+                                                   memCacheSizePerUser);
+    return status;
   }
 
   public static void main(String argv[]) throws Exception {

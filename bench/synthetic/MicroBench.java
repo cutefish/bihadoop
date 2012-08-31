@@ -1,3 +1,5 @@
+package bench.synthetic;
+
 /* Synthetic micro benchmark
  */
 import java.io.BufferedReader;

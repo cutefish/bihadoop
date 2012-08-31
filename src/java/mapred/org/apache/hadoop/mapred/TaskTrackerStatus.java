@@ -350,6 +350,7 @@ public class TaskTrackerStatus implements Writable {
     taskReports = new ArrayList<TaskStatus>();
     resStatus = new ResourceStatus();
     this.healthStatus = new TaskTrackerHealthStatus();
+    blockCacheStatus = new BlockCacheStatus();
   }
 
   TaskTrackerStatus(String trackerName, String host) {
@@ -710,6 +711,7 @@ public class TaskTrackerStatus implements Writable {
     getHealthStatus().readFields(in);
 
     //Added by xyu40@gatech.edu
+    
     blockCacheStatus.readFields(in);
     //end xyu40@gatech.edu
   }

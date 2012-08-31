@@ -20,6 +20,8 @@ import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.JobContext;
+import org.apache.hadoop.mapreduce.RecordReader;
+import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.net.NetworkTopology;
 import org.apache.hadoop.util.ReflectionUtils;
@@ -29,7 +31,8 @@ import org.apache.hadoop.util.ReflectionUtils;
  *
  * Currently only support two splits.
  */
-abstract public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
+public class Map2InputFormat 
+  extends FileInputFormat<String[], TrackedSegments>  {
 
   private static final Log LOG = LogFactory.getLog(Map2InputFormat.class);
 
@@ -187,4 +190,11 @@ abstract public class Map2InputFormat<K, V> extends FileInputFormat<K, V> {
     Configuration conf = context.getConfiguration();
     return conf.getBoolean("mapred.map2.input.fileNameAsIndex", false);
   }
+  
+  public RecordReader<String[], TrackedSegments> createRecordReader(
+      InputSplit split, TaskAttemptContext context) 
+      throws IOException, InterruptedException {
+    return new Map2RecordReader();
+  }
+
 }

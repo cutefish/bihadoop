@@ -138,7 +138,9 @@ public class Map2MetaInfo {
   }
 
   public Segments getLocalSegments(String host) {
-    return new Segments(localityMap.get(host));
+    List<Segment> list = localityMap.get(host);
+    if (list == null) return new Segments(new ArrayList<Segment>(0));
+    return new Segments(list);
   }
   
 

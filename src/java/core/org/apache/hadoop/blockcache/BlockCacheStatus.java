@@ -19,7 +19,9 @@ public class BlockCacheStatus implements Writable {
   public long diskCacheCapacity;
   public long memoryCacheCapacity;
 
-  public BlockCacheStatus() { }
+  public BlockCacheStatus() { 
+    segments = new Segments();
+  }
 
   public BlockCacheStatus(Segments segments,
                           long diskCacheCapacity,

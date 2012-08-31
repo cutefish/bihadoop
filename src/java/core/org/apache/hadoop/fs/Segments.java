@@ -175,18 +175,23 @@ public class Segments implements Writable {
   }
 
   public void write(DataOutput out) throws IOException {
+    System.out.println("write segments: " + thisList.size());
     out.writeInt(thisList.size());
     for (Segment seg : thisList) {
       seg.write(out);
     }
+    System.out.println("write segments finish " + thisList.size());
   }
 
   public void readFields(DataInput in) throws IOException {
+    System.out.println("reading segments");
     int length = in.readInt();
+    System.out.println(length);
     thisList = new ArrayList<Segment>(length);
     for (int i = 0; i < length; ++i) {
       thisList.get(i).readFields(in);
     }
+    System.out.println("read segments finish");
   }
 
 }
