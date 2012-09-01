@@ -120,26 +120,16 @@ public abstract class IndexedTextOutputFormat<K, V>
       int currSize = out.size();
 
       String index = generateIndexForKeyValue(key, value, path);
-      indexOut.write(IndexingConstants.INDEX_START);
+      indexOut.write(IndexingConstants.IDX_START);
       Text.writeString(indexOut, index);
-      Segment segment = new Segment(new Path(path), prevSize, currSize - prevSize);
-      indexOut.write(IndexingConstants.SEGMENT_START);
-      segment.write(indexOut);
-      indexOut.write(IndexingConstants.SEGMENT_END);
-      indexOut.write(IndexingConstants.INDEX_END);
+      indexOut.write(IndexingConstants.SEG_START);
+      indexOut.writeLong(prevSize);
+      indexOut.writeLong(currSize - prevSize);
     }
 
     public synchronized 
     void close(TaskAttemptContext context) throws IOException {
       out.close();
-      //write index
-      indexOut.writeInt(indices.size());
-      for (int i = 0; i < indices.size(); ++i) {
-        Text.writeString(indexOut, indices.get(i));
-        indexOut.writeInt(1);
-        indexOut.writeLong(segments.get(i).getOffset());
-        indexOut.writeLong(segments.get(i).getLength());
-      }
       indexOut.close();
     }
   }
