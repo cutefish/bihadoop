@@ -54,11 +54,14 @@ public class IndexedFileReader {
         while(true) {
           in.readFully(mark);
           if (!Arrays.equals(mark, IndexingConstants.SEG_START)) {
-            if (!Arrays.equals(mark, IndexingConstants.IDX_START)) {
+            if (!Arrays.equals(mark, IndexingConstants.IDX_END)) {
               throw new IOException("Invalid header on index file");
             }
             else {
               segList.add(segs.toArray(new Segment[segs.size()]));
+              in.readFully(mark);
+              if (!Arrays.equals(mark, IndexingConstants.IDX_START))
+                throw new IOException("Invalid header on index file");
               break;
             }
           }

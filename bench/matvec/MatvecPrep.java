@@ -20,24 +20,27 @@ File: MatvecPrep.java
 Version: 2.0
 ***********************************************************************/
 
-package bench.preproc;
+package bench.matvec;
 
-import java.io.*;
-import java.util.*;
-import java.text.*;
-import org.apache.hadoop.conf.*;
-import org.apache.hadoop.fs.*;
-import org.apache.hadoop.io.*;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.Configured;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.map2.IndexedTextOutputFormat;
-import org.apache.hadoop.util.*;
+import org.apache.hadoop.util.ToolRunner;
+import org.apache.hadoop.util.Tool;
 
-public class MatvecPrep extends Configured implements Tool 
-{
+public class MatvecPrep extends Configured implements Tool {
   //////////////////////////////////////////////////////////////////////
   // STAGE 1: convert vectors and edges to block format
   //		(a) (vector)  ROWID		vVALUE    =>    BLOCKID	IN-BLOCK-INDEX VALUE
@@ -158,7 +161,7 @@ public class MatvecPrep extends Configured implements Tool
 		public void reduce (final Text key, final Iterable<Text> values, 
                         final Context context) 
         throws IOException, InterruptedException {
-      String out_value = "";
+      StringBuilder out_value = new StringBuilder();
       ArrayList<String> value_al = new ArrayList<String>();
 
       for (Text val : values) {
@@ -169,23 +172,31 @@ public class MatvecPrep extends Configured implements Tool
         value_al.add( value_text );
       }
 
+      context.setStatus("start sorting values, size: " + value_al.size());
+
       Collections.sort(value_al, mpc );
 
-      Iterator<String> iter = value_al.iterator();
-      while( iter.hasNext() ){
-        String cur_val = iter.next();
+      context.setStatus("start appending values, size: " + value_al.size());
+
+      int progress = 0;
+      for (String cur_val : value_al) {
+        progress ++;
 
         if( out_value.length() != 0 )
-          out_value += " ";
-        out_value += cur_val;
+          out_value.append(" ");
+        out_value.append(cur_val);
+
+        if (progress % 1000000 == 0) context.progress();
       }
 
       value_al.clear();
 
+      context.setStatus("start writing values, size: " + value_al.size());
+
       if( out_prefix != null )
-        context.write(key, new Text(out_prefix + out_value));
+        context.write(key, new Text(out_prefix + out_value.toString()));
       else
-        context.write(key, new Text(out_value));
+        context.write(key, new Text(out_value.toString()));
     }
   }
 
@@ -219,9 +230,8 @@ public class MatvecPrep extends Configured implements Tool
     }
 
     // submit the map/reduce job.
-    public int run (final String[] args) throws Exception
-    {
-      if (args.length < 2) {
+    public int run (final String[] args) throws Exception {
+      if (args.length != 2) {
         return printUsage();
       }
 
@@ -241,7 +251,8 @@ public class MatvecPrep extends Configured implements Tool
     protected Job configStage1 () throws Exception {
       Configuration conf = new Configuration();
       conf.addResource("bench-common.xml");
-      conf.addResource("preproc-default-conf.xml");
+      conf.addResource("preproc-conf.xml");
+      conf.set("mapred.child.java.opts", "-Xmx1024m");
       System.out.format("common: fs.default.name:%s\n", conf.get("fs.default.name"));
 
       Job job = new Job(conf, "MatvecPrep");
@@ -266,7 +277,6 @@ public class MatvecPrep extends Configured implements Tool
               "matvec.num.reduce", -1));
       job.setOutputKeyClass(Text.class);
       job.setOutputValueClass(Text.class);
-      job.setMapOutputValueClass(Text.class);
 
       if (job.getConfiguration().getBoolean(
               "matvec.buildindex", true)) {

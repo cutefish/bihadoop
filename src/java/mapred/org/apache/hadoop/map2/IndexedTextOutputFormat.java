@@ -125,6 +125,7 @@ public abstract class IndexedTextOutputFormat<K, V>
       indexOut.write(IndexingConstants.SEG_START);
       indexOut.writeLong(prevSize);
       indexOut.writeLong(currSize - prevSize);
+      indexOut.write(IndexingConstants.IDX_END);
     }
 
     public synchronized 
