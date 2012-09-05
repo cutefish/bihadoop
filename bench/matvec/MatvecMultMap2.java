@@ -2,14 +2,18 @@ package bench.matvec;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.DataOutputStream;
 import java.io.InputStreamReader;
 import java.io.IOException;
 import java.io.FileWriter;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Random;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
@@ -41,7 +45,8 @@ public class MatvecMultMap2 extends Configured implements Tool {
 
     FileSystem fs;
 
-    public void setup(Context context) {
+    public void setup(Context context) 
+        throws IOException, InterruptedException {
       fs = FileSystem.get(context.getConfiguration());
     }
 
@@ -70,12 +75,13 @@ public class MatvecMultMap2 extends Configured implements Tool {
       Segment matSeg = segments[matIdx];
       Segment vecSeg = segments[vecIdx];
       FSDataInputStream in;
+      BufferedReader reader;
 
       HashMap<Integer, Double> vecBlock = new HashMap<Integer, Double>();
       //build vector block into memory
       in = fs.openCachedReadOnly(vecSeg.getPath());
       in.seek(vecSeg.getOffset());
-      BufferedReader reader = new BufferedReader(new InputStreamReader(in));
+      reader = new BufferedReader(new InputStreamReader(in));
       while(in.getPos() < vecSeg.getOffset() + vecSeg.getLength()) {
         String lineText = reader.readLine();
         //ignore comment
@@ -94,8 +100,8 @@ public class MatvecMultMap2 extends Configured implements Tool {
       //calculate multiplication for each mat block element
       //assuming sorted in advance to save memory
       in = fs.openCachedReadOnly(matSeg.getPath());
-      in.seek(blockSeg.getOffset());
-      BufferedReader reader = new BufferedReader(new InputStreamReader(in));
+      in.seek(matSeg.getOffset());
+      reader = new BufferedReader(new InputStreamReader(in));
       while(in.getPos() < vecSeg.getOffset() + vecSeg.getLength()) {
         String lineText = reader.readLine();
         //ignore comment
@@ -108,10 +114,10 @@ public class MatvecMultMap2 extends Configured implements Tool {
         int rowId = Integer.parseInt(line[0]);
         int colId = Integer.parseInt(line[1]);
         double rank = vecBlock.get(colId);
-        context.write(IntWritable(rowId), DoubleWritable(rank));
+        context.write(new IntWritable(rowId), new DoubleWritable(rank));
 
-        trSegs.progress = (double) (in.getPos() - vecSeg.getOffset()) / 
-            (double) vecSeg.getLength();
+        trSegs.progress = (float) (in.getPos() - vecSeg.getOffset()) / 
+            (float) vecSeg.getLength();
       }
     }
   }
@@ -122,23 +128,21 @@ public class MatvecMultMap2 extends Configured implements Tool {
 
     public void reduce(final IntWritable key, 
                        final Iterable<DoubleWritable> values,
-                       final Context context) {
-      double sum;
+                       final Context context) 
+        throws IOException, InterruptedException {
+      double sum = 0;
       for (DoubleWritable val : values) {
         sum += val.get();
       }
-      context.write(key, DoubleWritable(sum));
+      context.write(key, new DoubleWritable(sum));
     }
   }
 
   /////////////////////////////////////////////////////////////////////////////
   // command line interface
   /////////////////////////////////////////////////////////////////////////////
-  protected Configuration conf = getConf();
-  protected int vecSize = 0;
-  protected int blockSize = 0;
-  protected Path matPath = null;
-  protected Path vecPath = null;
+  protected Configuration conf;
+  protected Path inPath = null;
   protected Path outPath = null;
 
   public static void main(final String[] args) {
@@ -157,8 +161,7 @@ public class MatvecMultMap2 extends Configured implements Tool {
   // Print the command-line usage text.
   protected static int printUsage ()
   {
-    System.out.println("MatvecMultMap2 " + 
-                       "<mat_path> <vec_path> <out_path>");
+    System.out.println("MatvecMultMap2 <inPath> <outPath>");
 
     ToolRunner.printGenericCommandUsage(System.out);
 
@@ -166,44 +169,170 @@ public class MatvecMultMap2 extends Configured implements Tool {
   }
 
   public int run(final String[] args) throws Exception {
-    if (args.length != 4) {
+    if (args.length != 2) {
       return printUsage();
     }
 
-    conf.addResource("matvecmultmap2-conf.xml");
-    vecSize = conf.getInt("matvecmultmap2.vec.size", -1);
-    blockSize = conf.getInt("matvecmultmap2.block.size", -1);
+    conf = getConf();
+    conf.addResource("matvec-conf.xml");
+    System.out.println("reading config done");
 
-    matPath = args[0];
-    vecPath = args[1];
-    outPath = args[2];
+    inPath = new Path(args[0]);
+    outPath = new Path(args[1]);
 
     FileSystem fs = FileSystem.get(conf);
-    fs.delete(vecPath);
     fs.delete(outPath);
 
-    //generate vector first
-    generateVector(vecPath);
+    //generate data
+    generateVector();
+    generateMatrix();
 
+    //run
+    safeRunJob(configStage1(), "configStage1");
+
+    return 1;
   }
 
-  private void generateVector(Path vecPath) {
-    FileWriter file = new FileWriter("/tmp/xyu40Vector");
-    BufferedWriter out = new BufferedWriter(file);
-    FileWriter idxFile = new FileWriter("/tmp/xyu40Vector.map2idx");
-    BufferedWriter idxOut = new BufferedWriter(file);
-    int prevBlockId = -1;
-    int currBlockId = 0;
-    long prevOff = 0;
-    long currOff = 0;
+  private void generateVector() throws Exception {
+    Path[] localPath = {
+      new Path("/tmp/testVector"), 
+      new Path("/tmp/testVector.map2idx")
+    };
+    FileOutputStream file = new FileOutputStream(localPath[0].toString());
+    DataOutputStream out = new DataOutputStream(file);
+    FileOutputStream idxFile = new FileOutputStream(localPath[1].toString());
+    DataOutputStream idxOut = new DataOutputStream(idxFile);
+    int vecSize = conf.getInt("matvec.node.size", 10);
+    int blockSize = conf.getInt("matvec.block.size", 2);
+    HashMap<String, List<String>> blocks = new HashMap<String, List<String>>();
     for (int i = 0; i < vecSize; ++i) {
-      out.write("" + i + "\t" + 0.1);
-      currBlockId = i / blockSize;
-      if (currBlockId != prevBlockId) {
+      String line = "" + i + "\t" + 0.1 + "\n";
+      String blockId = "vec_" + i / blockSize;
+      List<String> block = blocks.get(blockId);
+      if (block == null) {
+        block = new ArrayList<String>();
+        blocks.put(blockId, block);
+      }
+      block.add(line);
+    }
 
+    int prevOff = 0;
+    int currOff = 0;
+    for (String block : blocks.keySet()) {
+      for (String line : blocks.get(block)) {
+        out.writeBytes(line);
+        currOff += line.length();
+      }
+      idxOut.write(IndexingConstants.IDX_START);
+      Text.writeString(idxOut, block);
+      idxOut.write(IndexingConstants.SEG_START);
+      idxOut.writeLong(prevOff);
+      idxOut.writeLong(currOff - prevOff);
+      idxOut.write(IndexingConstants.IDX_END);
+      prevOff = currOff;
+    }
+
+    //copy to hdfs
+    FileSystem fs = FileSystem.get(conf);
+    fs.copyFromLocalFile(false, true, localPath, inPath);
+  }
+
+  private void generateMatrix() throws Exception {
+    Path[] localPath = {
+      new Path("/tmp/testMatrix"), 
+      new Path("/tmp/testMatrix.map2idx")
+    };
+    FileOutputStream file = new FileOutputStream(localPath[0].toString());
+    DataOutputStream out = new DataOutputStream(file);
+    FileOutputStream idxFile = new FileOutputStream(localPath[1].toString());
+    DataOutputStream idxOut = new DataOutputStream(idxFile);
+    int matSize = conf.getInt("matvec.node.size", 10);
+    int blockSize = conf.getInt("matvec.block.size", 2);
+    float sparseLevel = conf.getFloat("matvec.sparse.level", 0.3f);
+    HashMap<String, List<String>> blocks = new HashMap<String, List<String>>();
+    Random r = new Random();
+    for (int i = 0; i < matSize; ++i) {
+      for (int j = 0; j < matSize; ++j) {
+        if (r.nextFloat() > sparseLevel) continue;
+        String line = "" + i + "\t" + j + "\n";
+        String blockId = "mat_" + i / blockSize + "_" + j / blockSize;
+        List<String> block = blocks.get(blockId);
+        if (block == null) {
+          block = new ArrayList<String>();
+          blocks.put(blockId, block);
+        }
+        block.add(line);
       }
     }
+    int prevOff = 0;
+    int currOff = 0;
+    for (String block : blocks.keySet()) {
+      for (String line : blocks.get(block)) {
+        out.writeBytes(line);
+        currOff += line.length();
+      }
+      idxOut.write(IndexingConstants.IDX_START);
+      Text.writeString(idxOut, block);
+      idxOut.write(IndexingConstants.SEG_START);
+      idxOut.writeLong(prevOff);
+      idxOut.writeLong(currOff - prevOff);
+      idxOut.write(IndexingConstants.IDX_END);
+      prevOff = currOff;
+    }
+
+    //copy to hdfs
+    FileSystem fs = FileSystem.get(conf);
+    fs.copyFromLocalFile(false, true, localPath, inPath);
   }
 
+  private Job safeRunJob(Job job, String message) throws Exception {
+    boolean succeeded = job.waitForCompletion(true);
+    if (!succeeded) {
+      System.out.println("Job: " + message + " failed");
+      System.exit(-1);
+      }
+    return job;
+  }
 
+  private Job configStage1() throws Exception {
+    Job job = new Job(conf, "MatvecMultMap2Stage1");
+    job.setJarByClass(MatvecMultMap2.class);
+    job.setMapperClass(MapStage1.class);
+    job.setReducerClass(RedStage1.class);
+    job.setNumReduceTasks(1);
+    job.setOutputKeyClass(IntWritable.class);
+    job.setOutputValueClass(DoubleWritable.class);
+    job.setInputFormatClass(Map2InputFormat.class);
+    Map2InputFormat.setIndexFilter(job, MatvecMultFilter.class);
+    Map2InputFormat.setInputPaths(job, inPath);
+    FileOutputFormat.setOutputPath(job, outPath);
+    return job;
+  }
+
+  public static class MatvecMultFilter implements Map2Filter {
+    public boolean accept(String idx0, String idx1) {
+      String matIdx;
+      String vecIdx;
+      if (idx0.contains("mat")) {
+        matIdx = idx0;
+        vecIdx = idx1;
+      }
+      else {
+        matIdx = idx1;
+        vecIdx = idx0;
+      }
+      String[] matId = matIdx.split("_");
+      String[] vecId = vecIdx.split("_");
+      if (matId.length != 3 || vecId.length != 2) return false;
+      try {
+        int matColId = Integer.parseInt(matId[2]);
+        int vecRowId = Integer.parseInt(vecId[1]);
+        if (matColId == vecRowId) return true;
+      }
+      catch(Exception e) {
+        return false;
+      }
+      return false;
+    }
+  }
 }

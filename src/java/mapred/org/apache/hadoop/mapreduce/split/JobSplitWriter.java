@@ -85,12 +85,11 @@ public class JobSplitWriter {
         info);
     //Added by xyu40@gatech
     if (conf.getBoolean("mapred.map2.enabledMap2", false)) {
-      Map2Split[] map2Splits = (Map2Split[]) splits;
       writeJobMap2MetaInfo(fs, 
                            JobSubmissionFiles.getJobMap2MetaFile(jobSubmitDir),
                            new FsPermission(
                                JobSubmissionFiles.JOB_FILE_PERMISSION),
-                           map2Splits);
+                           splits);
     }
     //end xyu40@gatech
   }
@@ -214,13 +213,14 @@ public class JobSplitWriter {
   }
 
   //Added by xyu40@gatech.edu
-  private static <T extends Map2Split> void writeJobMap2MetaInfo(
+  private static <T extends InputSplit> void writeJobMap2MetaInfo(
       FileSystem fs, Path filename, FsPermission p, T[] splits) 
       throws IOException{
     FSDataOutputStream out = FileSystem.create(fs, filename, p);
     out.write("MAP2-INFO".getBytes("UTF-8"));
     WritableUtils.writeVInt(out, splits.length);
-    for (T split : splits) {
+    for (T inputSplit : splits) {
+      Map2Split split = (Map2Split) inputSplit;
       Segment[] segs = split.getSegments();
       WritableUtils.writeVInt(out, segs.length);
       //write segments and its location

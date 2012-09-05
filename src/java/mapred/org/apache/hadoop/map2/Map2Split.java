@@ -58,7 +58,7 @@ public class Map2Split extends SegmentedSplit {
     else {
       List<String> hostList = new ArrayList<String>();
       for (int i = 0; i < hosts.length; ++i) {
-        for (int j = 0; i < hosts[i].length; ++j) {
+        for (int j = 0; j < hosts[i].length; ++j) {
           hostList.add(hosts[i][j]);
         }
       }

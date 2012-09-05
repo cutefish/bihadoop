@@ -39,6 +39,9 @@ public class Map2InputFormat
   @Override
   public List<InputSplit> getSplits(JobContext job) throws IOException {
 
+    LOG.info("Calculating splits");
+    job.getConfiguration().setBoolean("mapred.map2.enabledMap2", true);
+
     List<InputSplit> splits;
     List<String> idxList = new ArrayList<String>();
     List<Segment[]> segmentList = new ArrayList<Segment[]>();
@@ -46,6 +49,7 @@ public class Map2InputFormat
 
     List<FileStatus> files = listStatus(job);
     IndexedFileReader reader = new IndexedFileReader();
+    LOG.info("Reading indices");
     for (FileStatus file: files) {
       Path path = file.getPath();
       FileSystem fs = path.getFileSystem(job.getConfiguration());
@@ -72,7 +76,7 @@ public class Map2InputFormat
           for (Segment seg : segs) {
             long off = seg.getOffset();
             long len = seg.getLength();
-            String[] hosts = collectHosts(blkLocations, 0, length);
+            String[] hosts = collectHosts(blkLocations, off, len);
             segLocMap.put(seg, hosts);
           }
         }
@@ -86,6 +90,7 @@ public class Map2InputFormat
 
     splits = filterAndCombine(job, idxList, segmentList, segLocMap);
 
+    LOG.info("Created splits");
     return splits;
   }
 
@@ -96,7 +101,7 @@ public class Map2InputFormat
     long start = off;
     long end = start + off;
     int startIdx = findBlock(blocks, off);
-    int idx = (startIdx > 0) ? startIdx : -(startIdx + 1);
+    int idx = (startIdx >= 0) ? startIdx : -(startIdx + 1);
     while(idx < blocks.size()) {
       BlockLocation curr = blocks.get(idx);
       long currStart = curr.getOffset();
@@ -172,10 +177,10 @@ public class Map2InputFormat
     return ret;
   }
 
-  public static void setIndexFilter(Job job, 
-                                    Class<? extends Map2Filter> filter) {
+  public static void setIndexFilter(
+      Job job, Class<? extends Map2Filter> cls) throws IllegalStateException {
     job.getConfiguration().setClass("mapred.map2.input.indexFilter.class",
-                                    filter, Map2Filter.class);
+                                    cls, Map2Filter.class);
   }
 
   public static Map2Filter getIndexFilter(JobContext context) {

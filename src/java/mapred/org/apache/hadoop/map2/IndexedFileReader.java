@@ -37,12 +37,13 @@ public class IndexedFileReader {
    * ...
    */
   public void readIndexedFile(FileSystem fs, Path path) throws IOException {
+    idxList = new ArrayList<String>();
+    segList = new ArrayList<Segment[]>();
+    if (path.toString().endsWith(".map2idx")) return;
     Path idxPath = path.suffix(".map2idx");
     FSDataInputStream in = null;
     try {
       in = fs.open(idxPath);
-      idxList = new ArrayList<String>();
-      segList = new ArrayList<Segment[]>();
       byte[] mark = new byte[IndexingConstants.MARK_LEN];
       in.readFully(mark);
       if (!Arrays.equals(mark, IndexingConstants.IDX_START))
@@ -67,13 +68,14 @@ public class IndexedFileReader {
           }
           long off = in.readLong();
           long len = in.readLong();
+          System.out.flush();
           Segment seg = new Segment(fs, path, off, len);
           segs.add(seg);
         }
       }
     }
     catch (EOFException eof) {
-      LOG.info("Finish reading index file");
+      LOG.info("Finish reading index file:" + path);
     }
     catch (IOException ioe) {
       LOG.info("Read error on " + idxPath + ": " + 

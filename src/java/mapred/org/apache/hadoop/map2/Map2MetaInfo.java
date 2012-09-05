@@ -52,6 +52,7 @@ public class Map2MetaInfo {
                            Configuration conf, Path jobSubmitDir) 
       throws IOException {
     Path infoPath = JobSubmissionFiles.getJobMap2MetaFile(jobSubmitDir);
+    LOG.info("Map2MetaInfo path: " + infoPath);
     FSDataInputStream in = fs.open(infoPath);
     byte[] HEADER = "MAP2-INFO".getBytes("UTF-8");
     byte[] header = new byte[HEADER.length]; 
@@ -69,6 +70,7 @@ public class Map2MetaInfo {
       }
       Segment[] segs = new Segment[2];
       for (int j = 0; j < 2; ++j) {
+        segs[j] = new Segment();
         segs[j].readFields(in);
         int numLocs = WritableUtils.readVInt(in);
         for (int k = 0; k < numLocs; ++k) {
@@ -76,6 +78,7 @@ public class Map2MetaInfo {
           List<Segment> localList = localityMap.get(loc);
           if (localList == null) {
             localList = new ArrayList<Segment>();
+            localityMap.put(loc, localList);
           }
           //insert with order, assuming segments do not overlap
           int idx = Collections.binarySearch(localList, segs[j]);

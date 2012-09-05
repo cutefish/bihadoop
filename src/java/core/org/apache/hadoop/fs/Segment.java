@@ -43,7 +43,7 @@ public class Segment implements Writable, Comparable<Segment> {
 
   public Segment(FileSystem fs, Path path, long off, long len) {
     this(fs.getUri().getScheme(), fs.getUri().getAuthority(), 
-         path.toString(), off, len);
+         path.toUri().getPath(), off, len);
   }
 
   public Segment(Segment that) {
