@@ -54,7 +54,8 @@ public class MatvecPrep extends Configured implements Tool {
     int block_size;
     boolean makesym;
 
-    public void setup(Context context) {
+    public void setup(Context context) 
+        throws IOException, InterruptedException {
       block_size = context.getConfiguration().getInt("matvec.block.size", -1);
       makesym = context.getConfiguration().getBoolean("matvec.makesym", false);
 

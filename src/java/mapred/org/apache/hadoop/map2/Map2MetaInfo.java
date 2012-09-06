@@ -92,6 +92,9 @@ public class Map2MetaInfo {
       segList.add(segs);
       segTaskMap.put(pair, i);
     }
+
+    LOG.info(toString());
+    in.close();
   }
 
   public static class SegmentPair {
@@ -120,7 +123,7 @@ public class Map2MetaInfo {
       if (obj != null && obj instanceof SegmentPair) {
         SegmentPair that = (SegmentPair)obj;
         return isEqual(this.seg0, that.seg0)
-            && (this.seg1 == that.seg1);
+            && isEqual(this.seg1, that.seg1);
       }
       return false;
     }
@@ -133,7 +136,12 @@ public class Map2MetaInfo {
 
   public int getTaskIndex(Segment seg0, Segment seg1) {
     SegmentPair pair = new SegmentPair(seg0, seg1);
-    return segTaskMap.get(pair);
+    Integer i = segTaskMap.get(pair);
+    if (i == null) {
+      LOG.error("Cannot find pair: [" + seg0 + ", " + seg1 + "]");
+      return -1;
+    }
+    return i;
   }
 
   public List<Segment[]> getSegmentList() {
@@ -146,5 +154,25 @@ public class Map2MetaInfo {
     return new Segments(list);
   }
   
+  public String toString() {
+    StringBuilder sb = new StringBuilder();
+    sb.append("segment list:\n");
+    for (Segment[] segs : segList) {
+      sb.append("[");
+      for (Segment seg : segs) {
+        sb.append(seg.toString() + ", ");
+      }
+      sb.append("]\n");
+    }
+    sb.append("\nloc map:\n");
+    for (String loc : localityMap.keySet()) {
+      sb.append(loc + "[");
+      for (Segment seg: localityMap.get(loc)) {
+        sb.append(seg.toString() + ", ");
+      }
+      sb.append("]\n");
+    }
+    return sb.toString();
+  }
 
 }

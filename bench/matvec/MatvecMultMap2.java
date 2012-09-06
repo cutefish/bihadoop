@@ -39,15 +39,21 @@ import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.map2.*;
 
 public class MatvecMultMap2 extends Configured implements Tool {
+
   public static class MapStage1 
         extends Mapper<String[], TrackedSegments, 
                         IntWritable, DoubleWritable> {
 
     FileSystem fs;
+    private boolean useCache = true;
+
 
     public void setup(Context context) 
         throws IOException, InterruptedException {
-      fs = FileSystem.get(context.getConfiguration());
+      Configuration conf = context.getConfiguration();
+      fs = FileSystem.get(conf);
+      useCache = conf.getBoolean("matvec.useCache", true);
+      System.out.println("set up: useCache:" + useCache);
     }
 
     public void map(final String[] indices,
@@ -74,16 +80,33 @@ public class MatvecMultMap2 extends Configured implements Tool {
 
       Segment matSeg = segments[matIdx];
       Segment vecSeg = segments[vecIdx];
+
+      System.out.println("mat: " + indices[matIdx] + "\n" +
+                         "vec: " + indices[vecIdx] + "\n" +
+                         "matSeg: " + matSeg + "\n" + 
+                         "vecSeg: " + vecSeg);
+
       FSDataInputStream in;
       BufferedReader reader;
 
+      System.out.println("Start reading vector");
+
       HashMap<Integer, Double> vecBlock = new HashMap<Integer, Double>();
       //build vector block into memory
-      in = fs.openCachedReadOnly(vecSeg.getPath());
+      if (useCache) {
+        in = fs.openCachedReadOnly(vecSeg.getPath());
+      }
+      else {
+        in = fs.open(vecSeg.getPath());
+      }
       in.seek(vecSeg.getOffset());
       reader = new BufferedReader(new InputStreamReader(in));
-      while(in.getPos() < vecSeg.getOffset() + vecSeg.getLength()) {
+      int bytesRead = 0;
+      while(bytesRead < vecSeg.getLength()) {
         String lineText = reader.readLine();
+        if (lineText == null) break;
+        bytesRead += lineText.length() + 1;
+        System.out.println(lineText + ": " + bytesRead);
         //ignore comment
         if (lineText.startsWith("#"))
           continue;
@@ -96,14 +119,24 @@ public class MatvecMultMap2 extends Configured implements Tool {
         vecBlock.put(rowId, rank);
       }
       in.close();
-
+      
+      System.out.println("Start reading matrix");
       //calculate multiplication for each mat block element
       //assuming sorted in advance to save memory
-      in = fs.openCachedReadOnly(matSeg.getPath());
+      if (useCache) {
+        in = fs.openCachedReadOnly(matSeg.getPath());
+      }
+      else {
+        in = fs.open(matSeg.getPath());
+      }
       in.seek(matSeg.getOffset());
       reader = new BufferedReader(new InputStreamReader(in));
-      while(in.getPos() < vecSeg.getOffset() + vecSeg.getLength()) {
+      bytesRead = 0;
+      while(bytesRead < matSeg.getLength()) {
         String lineText = reader.readLine();
+        if (lineText == null) break;
+        bytesRead += lineText.length() + 1;
+        System.out.println(lineText + ": " + bytesRead);
         //ignore comment
         if (lineText.startsWith("#"))
           continue;
@@ -119,6 +152,7 @@ public class MatvecMultMap2 extends Configured implements Tool {
         trSegs.progress = (float) (in.getPos() - vecSeg.getOffset()) / 
             (float) vecSeg.getLength();
       }
+      in.close();
     }
   }
 

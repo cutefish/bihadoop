@@ -38,6 +38,15 @@ public class TestReadMetaInfo {
     System.out.println("infoPath: " + infoPath.toString());
     byte[] HEADER = "MAP2-INFO".getBytes("UTF-8");
     byte[] header = new byte[HEADER.length]; 
+    org.apache.hadoop.fs.FileStatus fstatus = fs.getFileStatus(infoPath);
+    System.out.println("file:" + 
+                       " length: " + fstatus.getLen() + 
+                       " isdir: " + fstatus.isDir() + 
+                       " block size: " + fstatus.getBlockSize() + 
+                       " permission: " + fstatus.getPermission() + 
+                       " owner: " + fstatus.getOwner() + 
+                       " path: " + fstatus.getPath() + 
+                       " \n");
     in.readFully(header);
     if (!Arrays.equals(HEADER, header)) {
       throw new IOException("Invalid header on map2 info file");

@@ -32,10 +32,23 @@ public class Map2RecordReader extends RecordReader<String[], TrackedSegments> {
 
   public void initialize(InputSplit genericSplit,
                          TaskAttemptContext context) throws IOException {
+    LOG.info("Initializing");
     Map2Split split = (Map2Split) genericSplit;
     firstIteration = true;
     indices = split.getIndices();
     trackedSegs.segments = split.getSegments();
+    StringBuilder sb = new StringBuilder();
+    sb.append("indices: [");
+    for (String index : indices) {
+      sb.append(index + ", ");
+    }
+    sb.append("]\n");
+    sb.append("segments: [");
+    for (Segment seg : trackedSegs.segments) {
+      sb.append("" + seg + ", ");
+    }
+    sb.append("]\n");
+    LOG.info(sb.toString());
   }
   
   public boolean nextKeyValue() throws IOException {

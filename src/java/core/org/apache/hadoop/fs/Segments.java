@@ -22,7 +22,7 @@ public class Segments implements Writable {
   private List<Segment> thisList;
 
   public Segments() {
-    thisList = null;
+    thisList = new ArrayList<Segment>();
   }
 
   public Segments(Collection<Segment> c) {
@@ -46,6 +46,31 @@ public class Segments implements Writable {
 
   public List<Segment> getList() {
     return thisList;
+  }
+
+  public boolean equals(Object obj) {
+    if (this == obj) return true;
+    if (obj != null && obj instanceof Segments) {
+      Segments that = (Segments)obj;
+      if (this.thisList.size() != that.thisList.size())
+        return false;
+      for (int i = 0; i < thisList.size(); ++i) {
+        if (!thisList.get(i).equals(that.thisList.get(i)))
+          return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  public String toString() {
+    StringBuilder sb = new StringBuilder();
+    sb.append("segments[");
+    for (Segment seg : thisList) {
+      sb.append(seg.toString() + ", ");
+    }
+    sb.append("]");
+    return sb.toString();
   }
 
   public static class CoverInfo implements Comparable<CoverInfo> {
@@ -175,23 +200,20 @@ public class Segments implements Writable {
   }
 
   public void write(DataOutput out) throws IOException {
-    System.out.println("write segments: " + thisList.size());
     out.writeInt(thisList.size());
     for (Segment seg : thisList) {
       seg.write(out);
     }
-    System.out.println("write segments finish " + thisList.size());
   }
 
   public void readFields(DataInput in) throws IOException {
-    System.out.println("reading segments");
     int length = in.readInt();
     System.out.println(length);
-    thisList = new ArrayList<Segment>(length);
     for (int i = 0; i < length; ++i) {
-      thisList.get(i).readFields(in);
+      Segment seg = new Segment();
+      seg.readFields(in);
+      thisList.add(seg);
     }
-    System.out.println("read segments finish");
   }
 
 }

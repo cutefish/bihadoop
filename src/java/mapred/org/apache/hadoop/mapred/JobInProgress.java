@@ -2329,8 +2329,12 @@ public class JobInProgress {
     //Added by xyu40@gatech.edu
     //use map2 packing 
     try {
+      LOG.info("Trying map2 packs");
       tip = findMapTaskFromPack(tts, clusterSize);
-      if (tip != null) return tip.getIdWithinJob();
+      if (tip != null) {
+        LOG.info("Choosing a pack task " + tip.getTIPId());
+        return tip.getIdWithinJob();
+      }
     }
     catch (Exception e) {
       LOG.error("Find map task from pack error:" + 
@@ -2554,6 +2558,7 @@ public class JobInProgress {
       LOG.error("Invalid index, something wrong with packer");
       return null;
     }
+    LOG.info("Scheduling map2 split: [" + task[0] + ", " + task[1] + "]");
     return maps[index];
   }
   //end xyu40@gatech.edu

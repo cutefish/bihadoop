@@ -63,6 +63,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   private String localCacheDir;
   private Cache cache;
   private CacheFileFreeStore freeStore = new CacheFileFreeStore();
+  private BlockCacheStatus prevStatus = new BlockCacheStatus();
 
   //service
   private Server rpcListener;
@@ -311,10 +312,12 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     }
 
     Segments getSegments(String user) {
-      CachedBlocks blocks = blockCache.get(user);
-      if (blocks == null) return new Segments(
-          new ArrayList<Segment>(0));
-      return blocks.getCachedSegments();
+      synchronized(blockCache) {
+        CachedBlocks blocks = blockCache.get(user);
+        if (blocks == null) return new Segments(
+            new ArrayList<Segment>());
+        return blocks.getCachedSegments();
+      }
     }
 
     /**
@@ -399,6 +402,11 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
         }
         int targetIndex = Collections.binarySearch(blocks, key);
         //targetIndex is less than zero for sure.
+        // empty list return null
+        if (targetIndex == -1) 
+          if (blocks.size() == 0)
+            return null;
+        // search for the block
         targetIndex = -(targetIndex + 1);
         if (targetIndex == blocks.size()) targetIndex = blocks.size() - 1;
         Block cached = blocks.get(targetIndex);
@@ -545,6 +553,10 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   private Block waitOrConstructBlock(
       boolean first, Block block, 
       PathInfo info, String user) throws IOException{
+    if (block == null) {
+      LOG.error(cache.getSegments(user));
+      throw new IOException("block null");
+    }
     //if not local and we are the first to put it there we are responsible to
     //cache it.
     long off = block.getOffset();
@@ -652,6 +664,10 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     BlockCacheStatus status = new BlockCacheStatus(cache.getSegments(user),
                                                    diskCacheSizePerUser,
                                                    memCacheSizePerUser);
+    if (!status.equals(prevStatus)) {
+      prevStatus = status;
+      LOG.info("Status changed: " + prevStatus);
+    }
     return status;
   }
 

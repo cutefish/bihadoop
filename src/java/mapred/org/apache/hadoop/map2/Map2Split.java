@@ -126,6 +126,7 @@ public class Map2Split extends SegmentedSplit {
     segs = new Segment[num];
     indices = new String[num];
     for (int i = 0; i < num; ++i) {
+      segs[i] = new Segment();
       segs[i].readFields(in);
       indices[i] = Text.readString(in);
     }

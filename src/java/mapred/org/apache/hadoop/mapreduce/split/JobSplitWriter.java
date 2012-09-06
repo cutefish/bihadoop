@@ -233,6 +233,7 @@ public class JobSplitWriter {
         }
       }
     }
+    out.close();
   }
   //end xyu40@gatech.edu
 
