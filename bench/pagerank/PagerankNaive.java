@@ -49,14 +49,9 @@ import org.apache.hadoop.map2.IndexedTextOutputFormat;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.hadoop.util.Tool;
 
-class MinMaxInfo {
-	public double min;
-	public double max;
-};
-
 public class PagerankNaive extends Configured implements Tool {
   protected static enum PrCounters { CONVERGE_CHECK }
-	protected static double converge_threshold = 0.000001;
+	protected static double threshold = 0.000001;
 
   //////////////////////////////////////////////////////////////////////
   // STAGE 1: Generate partial matrix-vector multiplication results.
@@ -66,12 +61,6 @@ public class PagerankNaive extends Configured implements Tool {
   //////////////////////////////////////////////////////////////////////
 	public static class MapStage1 
         extends Mapper<LongWritable, Text, IntWritable, Text> {
-    int make_symmetric = 0;
-
-		public void setup(Context context) {
-      make_symmetric = 
-          context.getConfiguration().getInt("matvec.makesym", 0);
-		}
 
 		public void map (final LongWritable key, final Text value, 
                      final Context context) 
@@ -218,122 +207,6 @@ public class PagerankNaive extends Configured implements Tool {
 					change_reported = 1;
         }
       }
-    }
-  }
-
-  //////////////////////////////////////////////////////////////////////
-  // STAGE 3: After finding pagerank, calculate min/max pagerank
-	//  - Input: The converged PageRank vector
-	//  - Output: (key 0) minimum PageRank, (key 1) maximum PageRank
-  //////////////////////////////////////////////////////////////////////
-	public static class MapStage3 
-        extends Mapper<LongWritable, Text, IntWritable, DoubleWritable> {
-		private final IntWritable from_node_int = new IntWritable();
-
-		public void map (final LongWritable key, final Text value, 
-                     final Context context) 
-        throws IOException, InterruptedException {
-
-			String line_text = value.toString();
-			if (line_text.startsWith("#"))				// ignore comments in edge file
-				return;
-
-			final String[] line = line_text.split("\t");
-			double pagerank = Double.parseDouble(line[1].substring(1));
-			context.write(new IntWritable(0) , new DoubleWritable(pagerank));
-			context.write(new IntWritable(1) , new DoubleWritable(pagerank));
-		}
-	}
-
-  public static class RedStage3 
-        extends Reducer<IntWritable, DoubleWritable, 
-                        IntWritable, DoubleWritable> {
-
-		public void reduce (final IntWritable key, 
-                        final Iterable<DoubleWritable> values, 
-                        final Context context) 
-            throws IOException, InterruptedException {
-
-			int i;
-			double min_value = 1.0;
-			double max_value = 0.0;
-
-			int min_or_max = key.get();	// 0 : min, 1: max
-
-      for (DoubleWritable value : values) {
-				double cur_value = value.get();
-
-        if( min_or_max == 0 ) {	// find min
-          if( cur_value < min_value )
-            min_value = cur_value;
-				} 
-        else {				// find max
-					if( cur_value > max_value )
-						max_value = cur_value;
-				}
-      }
-
-			if( min_or_max == 0)
-				context.write(key, new DoubleWritable(min_value));
-			else
-				context.write(key, new DoubleWritable(max_value));
-    }
-  }
-
-  //////////////////////////////////////////////////////////////////////
-  // STAGE 4 : Find distribution of pageranks.
-  //  - Input: The converged PageRank vector
-  //  - Output: The histogram of PageRank vector in 1000 bins between
-  //  min_PageRank and max_PageRank
-  //////////////////////////////////////////////////////////////////////
-	public static class MapStage4 
-        extends Mapper<LongWritable, Text, IntWritable, IntWritable> {
-
-		private final IntWritable from_node_int = new IntWritable();
-		double min_pr = 0;
-		double max_pr = 0;
-		double gap_pr = 0;
-		int hist_width = 1000;
-
-		public void setup(Context context) {
-      Configuration conf = context.getConfiguration();
-      min_pr = (double)conf.getFloat("pagerank.min.pr", 0f);
-      max_pr = (double)conf.getFloat("pagerank.max.pr", 0f);
-			gap_pr = max_pr - min_pr;
-		}
-
-		public void map (final LongWritable key, final Text value, 
-                     final Context context) 
-        throws IOException, InterruptedException {
-			String line_text = value.toString();
-			if (line_text.startsWith("#"))				// ignore comments in edge file
-				return;
-
-			final String[] line = line_text.split("\t");
-			double pagerank = Double.parseDouble(line[1].substring(1));
-			int distr_index = (int)(hist_width * (pagerank - min_pr)/gap_pr) + 1;
-			if(distr_index == hist_width + 1)
-				distr_index = hist_width;
-			context.write(new IntWritable(distr_index) , new IntWritable(1));
-		}
-	}
-
-  public static class RedStage4 
-        extends Reducer<IntWritable, IntWritable, IntWritable, IntWritable> {
-
-		public void reduce (final IntWritable key, 
-                        final Iterable<IntWritable> values, 
-                        final Context context) 
-        throws IOException, InterruptedException {
-
-			int sum = 0;
-
-      for (IntWritable value : values) {
-				int cur_value = value.get();
-				sum += cur_value;
-			}
-
-			context.write(key, new IntWritable(sum));
     }
   }
 
@@ -494,40 +367,6 @@ public class PagerankNaive extends Configured implements Tool {
                          new Path (vector_path.toString()+ "/" + file_name));
   }
 
-	// read neighborhood number after each iteration.
-	public static MinMaxInfo readMinMax(String new_path) 
-      throws Exception {
-		MinMaxInfo info = new MinMaxInfo();
-		String output_path = new_path + "/part-00000";
-		String file_line = "";
-
-		try {
-			BufferedReader in = new BufferedReader(	
-          new InputStreamReader(new FileInputStream(output_path), "UTF8"));
-
-			// Read first line
-			file_line = in.readLine();
-
-			// Read through file one line at time. Print line # and line
-			while (file_line != null){
-			    final String[] line = file_line.split("\t");
-
-				if(line[0].startsWith("0")) 
-					info.min = Double.parseDouble( line[1] );
-				else
-					info.max = Double.parseDouble( line[1] );
-
-				file_line = in.readLine();
-			}
-			
-			in.close();
-    } catch (IOException e) {
-      e.printStackTrace();
-    }
-
-    return info;//result;
-  }
-
   // Configure pass1
   protected Job configStage1 () throws Exception {
     Job job = new Job(conf, "PagerankNaiveStage1");
@@ -554,38 +393,6 @@ public class PagerankNaive extends Configured implements Tool {
 		FileInputFormat.setInputPaths(job, tempmv_path);  
 		FileOutputFormat.setOutputPath(job, output_path);  
 		return job;
-  }
-
-	// Configure pass3
-  protected Job configStage3 () throws Exception {
-    Job job = new Job(conf, "PagerankNaiveStage3");
-    job.setJarByClass(PagerankNaive.class);
-		job.setMapperClass(MapStage3.class);        
-		job.setReducerClass(RedStage3.class);
-		job.setCombinerClass(RedStage3.class);
-		job.setNumReduceTasks( 1 );
-    job.setOutputKeyClass(IntWritable.class);
-    job.setOutputValueClass(DoubleWritable.class);
-		FileInputFormat.setInputPaths(job, vector_path);  
-		FileOutputFormat.setOutputPath(job, minmax_path);  
-		return job;
-  }
-
-	// Configure pass4
-  protected Job configStage4(double min_pr, double max_pr) 
-      throws Exception {
-		conf.set("min_pr", "" + min_pr);
-		conf.set("max_pr", "" + max_pr);
-    Job job = new Job(conf, "PagerankNaiveStage3");
-		job.setMapperClass(MapStage4.class);        
-		job.setReducerClass(RedStage4.class);
-		job.setCombinerClass(RedStage4.class);
-		job.setOutputKeyClass(IntWritable.class);
-		job.setOutputValueClass(IntWritable.class);
-		job.setNumReduceTasks(nreducers);
-		FileInputFormat.setInputPaths(job, vector_path);  
-		FileOutputFormat.setOutputPath(job, distr_path);  
-    return job;
   }
 
   private void checkValidity() {

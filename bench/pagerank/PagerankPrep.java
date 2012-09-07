@@ -1,5 +1,7 @@
 package bench.pagerank;
 
+import java.io.FileOutputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -19,6 +21,7 @@ import org.apache.hadoop.util.ToolRunner;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.StringUtils;
 
+import org.apache.hadoop.map2.*;
 /**
  * Prepare the adjacency matrix for pagerank.
  *
@@ -96,7 +99,7 @@ public class PagerankPrep extends Configured implements Tool {
     public void setup(Context context) 
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
-      blockSize = conf.getInt("pagerank.prep.block.size", -1);
+      blockSize = conf.getInt("pagerank.block.size", -1);
     }
 
     public void map(final Object key, final Text value,
@@ -119,7 +122,7 @@ public class PagerankPrep extends Configured implements Tool {
       int blockRowId = rowId / blockSize;
       int blockColId = colId / blockSize;
 
-      Text newKey = new Text("" + blockRowId + "\t" + blockColId);
+      Text newKey = new Text("mat" + "\t" + blockRowId + "\t" + blockColId);
 
       //key = blockId, value = value
       context.write(newKey, value);
@@ -137,8 +140,8 @@ public class PagerankPrep extends Configured implements Tool {
       if (Id2.length != 3) return -1;
       int rowId1 = Integer.parseInt(Id1[0]);
       int rowId2 = Integer.parseInt(Id2[0]);
-      int colId1 = Integer.parseInt(Id1[0]);
-      int colId2 = Integer.parseInt(Id2[0]);
+      int colId1 = Integer.parseInt(Id1[1]);
+      int colId2 = Integer.parseInt(Id2[1]);
       if (rowId1 != rowId2) return rowId1 - rowId2;
       return colId1 - colId2;
     }
@@ -167,7 +170,7 @@ public class PagerankPrep extends Configured implements Tool {
       }
       blockList.clear();
 
-      context.write(null, new Text(sb.toString()));
+      context.write(key, new Text(sb.toString()));
     }
   }
 
@@ -175,8 +178,9 @@ public class PagerankPrep extends Configured implements Tool {
    * command line
    ***************************************************************************/
 
+  protected Path inPath = null;
+  protected Path nodePath = null;
   protected Path edgePath = null;
-  protected Path outPath = null;
   protected Path tmpPath = null;
   protected Configuration conf = null;
 
@@ -194,12 +198,12 @@ public class PagerankPrep extends Configured implements Tool {
   }
 
   protected static int printUsage() {
-    System.out.println("PagerankPrep <edge_path> <out_path>");
+    System.out.println("PagerankPrep <inPath> <edgePath> <nodePath>");
     return -1;
   }
 
   public int run(final String[] args) throws Exception {
-    if (args.length != 2) {
+    if (args.length != 3) {
       return printUsage();
     }
 
@@ -207,28 +211,36 @@ public class PagerankPrep extends Configured implements Tool {
     conf.addResource("pagerank-conf.xml");
     checkValidity();
 
-    edgePath = new Path(args[0]);
-    outPath = new Path(args[1]);
-    tmpPath = new Path(edgePath.getParent(), "/tmp");
+    inPath = new Path(args[0]);
+    edgePath = new Path(args[1]);
+    nodePath = new Path(args[2]);
+    tmpPath = new Path(inPath.getParent(), "/tmp");
 
     FileSystem fs = FileSystem.get(conf);
-    fs.delete(outPath, true);
+    fs.delete(edgePath, true);
+    fs.delete(nodePath, true);
+    fs.delete(tmpPath, true);
 
-    waitRun(configStage1());
-    waitRun(configStage2());
+    waitForJobFinish(configStage1());
+    waitForJobFinish(configStage2());
 
     fs.delete(tmpPath, true);
+
+    genNodeRanks();
     
     return 1;
   }
 
   private void checkValidity() {
-    int blockSize = conf.getInt("pagerank.prep.block.size", -1);
+    int blockSize = conf.getInt("pagerank.block.size", -1);
     if (blockSize == -1) 
       throw new IllegalArgumentException("block size not set");
+    int numNodes = conf.getInt("pagerank.num.nodes", -1);
+    if (numNodes == -1) 
+      throw new IllegalArgumentException("number of nodes not set");
   }
 
-  private void waitRun(Job job) throws Exception {
+  private void waitForJobFinish(Job job) throws Exception {
     boolean succeeded = job.waitForCompletion(true);
     if (!succeeded) {
       throw new RuntimeException(job.toString());
@@ -243,7 +255,7 @@ public class PagerankPrep extends Configured implements Tool {
     job.setNumReduceTasks(conf.getInt("pagerank.num.reducer", 1));
     job.setOutputKeyClass(Text.class);
     job.setOutputValueClass(Text.class);
-    FileInputFormat.setInputPaths(job, edgePath);
+    FileInputFormat.setInputPaths(job, inPath);
     FileOutputFormat.setOutputPath(job, tmpPath);
     return job;
   }
@@ -258,7 +270,7 @@ public class PagerankPrep extends Configured implements Tool {
     job.setOutputValueClass(Text.class);
     job.setOutputFormatClass(MatBlockOutputFormat.class);
     FileInputFormat.setInputPaths(job, tmpPath);
-    FileOutputFormat.setOutputPath(job, outPath);
+    FileOutputFormat.setOutputPath(job, edgePath);
     return job;
   }
 
@@ -271,4 +283,41 @@ public class PagerankPrep extends Configured implements Tool {
     }
   }
 
+  private void genNodeRanks() throws Exception {
+    int blockSize = conf.getInt("pagerank.block.size", 1);
+    int numNodes = conf.getInt("pagerank.num.nodes", 1);
+    Path[] localPath = {
+      new Path("/tmp/initialNodeRank"), 
+      new Path("/tmp/initialNodeRank.map2idx")
+    };
+    FileOutputStream file = new FileOutputStream(localPath[0].toString());
+    DataOutputStream out = new DataOutputStream(file);
+    FileOutputStream idxFile = new FileOutputStream(localPath[1].toString());
+    DataOutputStream idxOut = new DataOutputStream(idxFile);
+    int prevOff = 0;
+    int currOff = 0;
+    for (int i = 0; i < numNodes; i += blockSize) {
+      //in each block write a block and an index
+      int max = i + blockSize;
+      String blockId = "vec" + "\t" + i / blockSize;
+      StringBuilder sb = new StringBuilder();
+      for (int j = i; j < max; ++j) {
+        sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");
+      }
+      out.writeBytes(sb.toString());
+      currOff += sb.toString().length();
+      idxOut.write(IndexingConstants.IDX_START);
+      Text.writeString(idxOut, blockId);
+      idxOut.write(IndexingConstants.SEG_START);
+      idxOut.writeLong(prevOff);
+      idxOut.writeLong(currOff - prevOff);
+      idxOut.write(IndexingConstants.IDX_END);
+      prevOff = currOff;
+
+    }
+
+    //copy to hdfs
+    FileSystem fs = FileSystem.get(conf);
+    fs.copyFromLocalFile(false, true, localPath, nodePath);
+  }
 }

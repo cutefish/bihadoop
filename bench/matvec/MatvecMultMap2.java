@@ -149,8 +149,8 @@ public class MatvecMultMap2 extends Configured implements Tool {
         double rank = vecBlock.get(colId);
         context.write(new IntWritable(rowId), new DoubleWritable(rank));
 
-        trSegs.progress = (float) (in.getPos() - vecSeg.getOffset()) / 
-            (float) vecSeg.getLength();
+        trSegs.progress = (float) (in.getPos() - matSeg.getOffset()) / 
+            (float) matSeg.getLength();
       }
       in.close();
     }
@@ -241,7 +241,7 @@ public class MatvecMultMap2 extends Configured implements Tool {
     HashMap<String, List<String>> blocks = new HashMap<String, List<String>>();
     for (int i = 0; i < vecSize; ++i) {
       String line = "" + i + "\t" + 0.1 + "\n";
-      String blockId = "vec_" + i / blockSize;
+      String blockId = "vec\t" + i / blockSize;
       List<String> block = blocks.get(blockId);
       if (block == null) {
         block = new ArrayList<String>();
@@ -289,7 +289,7 @@ public class MatvecMultMap2 extends Configured implements Tool {
       for (int j = 0; j < matSize; ++j) {
         if (r.nextFloat() > sparseLevel) continue;
         String line = "" + i + "\t" + j + "\n";
-        String blockId = "mat_" + i / blockSize + "_" + j / blockSize;
+        String blockId = "mat\t" + i / blockSize + "\t" + j / blockSize;
         List<String> block = blocks.get(blockId);
         if (block == null) {
           block = new ArrayList<String>();
@@ -355,8 +355,8 @@ public class MatvecMultMap2 extends Configured implements Tool {
         matIdx = idx1;
         vecIdx = idx0;
       }
-      String[] matId = matIdx.split("_");
-      String[] vecId = vecIdx.split("_");
+      String[] matId = matIdx.split("\t");
+      String[] vecId = vecIdx.split("\t");
       if (matId.length != 3 || vecId.length != 2) return false;
       try {
         int matColId = Integer.parseInt(matId[2]);

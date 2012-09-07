@@ -48,7 +48,7 @@ public abstract class IndexedTextOutputFormat<K, V>
   abstract protected <K, V> String generateIndexForKeyValue(
       K key, V value, String path);
 
-  protected class LineRecordWriter<K, V>
+  protected class IndexedRecordWriter<K, V>
     extends RecordWriter<K, V> {
     private final String utf8 = "UTF-8";
     private final byte[] newline;
@@ -58,7 +58,7 @@ public abstract class IndexedTextOutputFormat<K, V>
     protected String path;
     private final byte[] keyValueSeparator;
 
-    public LineRecordWriter(DataOutputStream out, DataOutputStream indexOut, 
+    public IndexedRecordWriter(DataOutputStream out, DataOutputStream indexOut, 
                             String path, String keyValueSeparator) {
       try {
         newline = "\n".getBytes(utf8);
@@ -75,7 +75,7 @@ public abstract class IndexedTextOutputFormat<K, V>
       }
     }
 
-    public LineRecordWriter(DataOutputStream out, DataOutputStream indexOut,
+    public IndexedRecordWriter(DataOutputStream out, DataOutputStream indexOut,
                             String path) {
       this(out, indexOut, path, "\t");
     }
@@ -106,12 +106,14 @@ public abstract class IndexedTextOutputFormat<K, V>
 
       int prevSize = out.size();
 
-      if (!nullKey) {
-        writeObject(key);
-      }
-      if (!(nullKey || nullValue)) {
-        out.write(keyValueSeparator);
-      }
+      //do not write key, only write value, key is for index
+
+      //if (!nullKey) {
+      //  writeObject(key);
+      //}
+      //if (!(nullKey || nullValue)) {
+      //  out.write(keyValueSeparator);
+      //}
       if (!nullValue) {
         writeObject(value);
       }
@@ -156,14 +158,14 @@ public abstract class IndexedTextOutputFormat<K, V>
     if (!isCompressed) {
       FSDataOutputStream fileOut = fs.create(file, false);
       FSDataOutputStream idxOut = fs.create(idxFile, false);
-      return new LineRecordWriter<K, V>(
+      return new IndexedRecordWriter<K, V>(
           fileOut, idxOut, 
           new Path(getOutputPath(job), getOutputName(job)).toString(),
           keyValueSeparator);
     } else {
       FSDataOutputStream fileOut = fs.create(file, false);
       FSDataOutputStream idxOut = fs.create(idxFile, false);
-      return new LineRecordWriter<K, V>(
+      return new IndexedRecordWriter<K, V>(
           new DataOutputStream(codec.createOutputStream(fileOut)), idxOut, 
           new Path(getOutputPath(job), getOutputName(job)).toString(),
           keyValueSeparator);
