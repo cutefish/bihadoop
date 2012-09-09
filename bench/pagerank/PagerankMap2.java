@@ -64,15 +64,15 @@ public class PagerankMap2 extends Configured implements Tool {
         extends Mapper<String[], TrackedSegments,
                         Text, Text> {
     FileSystem fs;
-    float alpha;
     int blockSize;
+    boolean useCache;
 
     public void setup(Context context)
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
       fs = FileSystem.get(conf);
-      alpha = conf.getFloat("pagerank.alpha", 0.85f);
       blockSize = conf.getInt("pagerank.block.size", 1);
+      useCache = conf.getBoolean("pagerank.useCache", true);
     }
 
     /**
@@ -114,18 +114,19 @@ public class PagerankMap2 extends Configured implements Tool {
       Segment matSeg = segments[matIdx];
       Segment vecSeg = segments[vecIdx];
 
-      context.setStatus("mat: " + indices[matIdx] + "\n" +
-                         "vec: " + indices[vecIdx] + "\n" +
-                         "matSeg: " + matSeg + "\n" + 
-                         "vecSeg: " + vecSeg);
-
       FSDataInputStream in;
       BufferedReader reader;
 
-      context.setStatus("reading vector");
+      context.setStatus("reading vector: " + indices[vecIdx] + 
+                        " vecSeg: " + vecSeg);
 
       HashMap<Integer, Double> prevRank = new HashMap<Integer, Double>();
-      in = fs.openCachedReadOnly(vecSeg.getPath());
+      if (useCache) {
+        in = fs.openCachedReadOnly(vecSeg.getPath());
+      }
+      else {
+        in = fs.open(vecSeg.getPath());
+      }
       in.seek(vecSeg.getOffset());
       reader = new BufferedReader(new InputStreamReader(in));
       int bytesRead = 0;
@@ -151,8 +152,14 @@ public class PagerankMap2 extends Configured implements Tool {
       }
       in.close();
 
-      context.setStatus("reading matrix");
-      in = fs.openCachedReadOnly(matSeg.getPath());
+      context.setStatus("reading matrix: " + indices[matIdx] + 
+                        " matSeg: " + matSeg);
+      if (useCache) {
+        in = fs.openCachedReadOnly(matSeg.getPath());
+      }
+      else {
+        in = fs.open(matSeg.getPath());
+      }
       in.seek(matSeg.getOffset());
       reader = new BufferedReader(new InputStreamReader(in));
       bytesRead = 0;
@@ -204,11 +211,12 @@ public class PagerankMap2 extends Configured implements Tool {
     float alpha = 0;
     int numNodes = 0;
     double threshold = 0.0001;
+    boolean reportedChange = false;
 
     public void setup(Context context)
         throws IOException, InterruptedException {
         Configuration conf = context.getConfiguration();
-        alpha = conf.getFloat("pagerank.alpha", 0.85f);
+        alpha = conf.getFloat("pagerank.alpha", 0.15f);
         numNodes = conf.getInt("pagerank.num.nodes", 1);
         threshold = (double) conf.getFloat("pagerank.converge.threshold", 
                                            0.0001f);
@@ -240,11 +248,13 @@ public class PagerankMap2 extends Configured implements Tool {
       }
 
       StringBuilder sb = new StringBuilder();
-      boolean reportedChange = false;
       for (Map.Entry<Integer, Double> entry : currRank.entrySet()) {
         int rowId = entry.getKey();
-        double elemCurrRank = entry.getValue();
-        double elemPrevRank = prevRank.get(entry.getKey());
+        Double elemPrevRank = prevRank.get(rowId);
+        double xferProb = entry.getValue();
+        //add the coefficients
+        //alpha / |G| + (1 - alpha) * rank
+        double elemCurrRank = (1 - alpha) * xferProb + alpha / numNodes;
         if (!reportedChange) {
           double diff = Math.abs(elemCurrRank - elemPrevRank);
           if (diff > threshold) {
@@ -284,12 +294,12 @@ public class PagerankMap2 extends Configured implements Tool {
   }
 
   protected static int printUsage() {
-    System.out.println("PagerankPrep <inPath> <outPath>");
+    System.out.println("PagerankMap2 <inPath> <outPath>");
     return -1;
   }
 
   public int run(final String[] args) throws Exception {
-    if (args.length < 3) {
+    if (args.length != 2) {
       return printUsage();
     }
 
@@ -300,27 +310,37 @@ public class PagerankMap2 extends Configured implements Tool {
     inPath = new Path(args[0]);
     outPath = new Path(args[1]);
     FileSystem fs = FileSystem.get(conf);
+    long start, end;
 
-    edgePath = new Path(inPath.getParent(), "blkmatrix");
-    nodePath = new Path(inPath.getParent(), "blkvector");
-    fs.delete(edgePath, true);
-    fs.delete(nodePath, true);
-    String[] prepArgs = {inPath.toString(), 
-      edgePath.toString(), nodePath.toString()};
+    edgePath = new Path(inPath.getParent(), "blkedge");
+    nodePath = new Path(inPath.getParent(), "blknode");
 
-    PagerankPrep.main(prepArgs);
+    if (conf.getBoolean("pagerank.initialize", true)) {
+      fs.delete(edgePath, true);
+      fs.delete(nodePath, true);
+      String[] prepArgs = {inPath.toString(), 
+        edgePath.toString(), nodePath.toString()};
+      System.out.println("Tranforming edges and nodes");
+      start = System.currentTimeMillis();
+      PagerankPrep.main(prepArgs);
+      end = System.currentTimeMillis();
+      System.out.println("===map2 experiment===<time>[PagerankPrep]: " + 
+                       (end - start) + " ms");
+    }
 
     fs.delete(outPath, true);
     int maxNumIterations = conf.getInt("pagerank.max.num.iteration", 100);
 
+    System.out.println("Start iterating");
     boolean converged = false;
+    start = System.currentTimeMillis();
     for (int i = 0; i < maxNumIterations; ++i) {
       //Every iteration we read from edgePath and nodePath and output to
       //outPath.
       Job job = waitForJobFinish(configStage1());
       Counters c = job.getCounters();
       long changed = c.findCounter(PrCounters.CONVERGE_CHECK).getValue();
-      System.out.println("Iteration: " + " changed: " + changed);
+      System.out.println("Iteration: " + i + " changed: " + changed);
       if (changed == 0) {
         System.out.println("Converged.");
         fs.delete(edgePath);
@@ -328,13 +348,22 @@ public class PagerankMap2 extends Configured implements Tool {
         converged = true;
         break;
       }
-      fs.delete(edgePath);
       fs.delete(nodePath);
       fs.rename(outPath, nodePath);
     }
+    end = System.currentTimeMillis();
+    System.out.println("===map2 experiment===<time>[PagerankMap2Iterative]: " + 
+                       (end - start) + " ms");
 
     if (!converged) {
       System.out.println("Reached the max iteration.");
+      fs.rename(nodePath, outPath);
+    }
+    if (conf.getBoolean("pagerank.keep.intermediate", false)) {
+      FileUtil.copy(fs, outPath, fs, nodePath, false, true, conf);
+    }
+    else {
+      fs.delete(edgePath);
     }
     return 1;
   }
@@ -348,19 +377,21 @@ public class PagerankMap2 extends Configured implements Tool {
       throw new IllegalArgumentException("number of nodes not set");
   }
 
-  private void waitForJobFinish(Job job) throws Exception {
+  private Job waitForJobFinish(Job job) throws Exception {
     boolean succeeded = job.waitForCompletion(true);
     if (!succeeded) {
       throw new RuntimeException(job.toString());
     }
+    return job;
   }
 
   private Job configStage1() throws Exception {
+    int numReducers = conf.getInt("pagerank.num.reducers", 1);
     Job job = new Job(conf, "PagerankMap2");
     job.setJarByClass(PagerankMap2.class);
     job.setMapperClass(MapStage1.class);
     job.setReducerClass(RedStage1.class);
-    job.setNumReduceTasks(2);
+    job.setNumReduceTasks(numReducers);
     job.setOutputKeyClass(Text.class);
     job.setOutputValueClass(Text.class);
     job.setInputFormatClass(Map2InputFormat.class);

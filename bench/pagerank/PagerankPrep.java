@@ -60,6 +60,7 @@ public class PagerankPrep extends Configured implements Tool {
 
       //key = srcId, value = dstId
       context.write(new Text(line[0]), new Text(line[1]));
+      System.out.println(line[0] + ", " + line[1]);
     }
   }
 
@@ -73,16 +74,17 @@ public class PagerankPrep extends Configured implements Tool {
 
       //The probability of reaching a dstId node from srcId is
       //numOfEdgesFromSrcId ^ (-1)
-      ArrayList<Text> dstNodeList = new ArrayList<Text>();
+      ArrayList<String> dstNodeList = new ArrayList<String>();
       for (Text val: values) {
-        dstNodeList.add(val);
+        dstNodeList.add(val.toString());
       }
       float prob = 0;
       if (dstNodeList.size() > 0) 
         prob = 1 / (float)dstNodeList.size();
 
-      for (Text val: dstNodeList) {
-        context.write(val, new Text(key.toString() + "\t" + prob));
+      for (String val: dstNodeList) {
+        context.write(new Text(val), 
+                      new Text(key.toString() + "\t" + prob));
       }
     }
   }
@@ -157,16 +159,16 @@ public class PagerankPrep extends Configured implements Tool {
                        final Context context)
         throws IOException, InterruptedException {
 
-      ArrayList<Text> blockList = new ArrayList<Text>();
+      ArrayList<String> blockList = new ArrayList<String>();
       for (Text val : values) {
-        blockList.add(val);
+        blockList.add(val.toString());
       }
 
       Collections.sort(blockList, mc);
 
       StringBuilder sb = new StringBuilder();
-      for (Text val : blockList) {
-        sb.append(val.toString() + "\n");
+      for (String val : blockList) {
+        sb.append(val + "\n");
       }
       blockList.clear();
 
@@ -189,7 +191,8 @@ public class PagerankPrep extends Configured implements Tool {
       final int result = ToolRunner.run(new Configuration(), 
                                         new PagerankPrep(),
                                         args);
-      System.exit(result);
+      System.out.println("PagerankPrep main return: " + result);
+      return;
     }
     catch (Exception e) {
       System.out.println("Exception: " + StringUtils.stringifyException(e));
@@ -214,7 +217,7 @@ public class PagerankPrep extends Configured implements Tool {
     inPath = new Path(args[0]);
     edgePath = new Path(args[1]);
     nodePath = new Path(args[2]);
-    tmpPath = new Path(inPath.getParent(), "/tmp");
+    tmpPath = new Path(inPath.getParent(), "tmp");
 
     FileSystem fs = FileSystem.get(conf);
     fs.delete(edgePath, true);
@@ -226,7 +229,7 @@ public class PagerankPrep extends Configured implements Tool {
 
     fs.delete(tmpPath, true);
 
-    genNodeRanks();
+    genInitNodeRanks();
     
     return 1;
   }
@@ -240,11 +243,12 @@ public class PagerankPrep extends Configured implements Tool {
       throw new IllegalArgumentException("number of nodes not set");
   }
 
-  private void waitForJobFinish(Job job) throws Exception {
+  private Job waitForJobFinish(Job job) throws Exception {
     boolean succeeded = job.waitForCompletion(true);
     if (!succeeded) {
       throw new RuntimeException(job.toString());
     }
+    return job;
   }
 
   private Job configStage1() throws Exception {
@@ -283,7 +287,7 @@ public class PagerankPrep extends Configured implements Tool {
     }
   }
 
-  private void genNodeRanks() throws Exception {
+  private void genInitNodeRanks() throws Exception {
     int blockSize = conf.getInt("pagerank.block.size", 1);
     int numNodes = conf.getInt("pagerank.num.nodes", 1);
     Path[] localPath = {
@@ -296,6 +300,7 @@ public class PagerankPrep extends Configured implements Tool {
     DataOutputStream idxOut = new DataOutputStream(idxFile);
     int prevOff = 0;
     int currOff = 0;
+    System.out.println("generating initial rank vector");
     for (int i = 0; i < numNodes; i += blockSize) {
       //in each block write a block and an index
       int max = i + blockSize;
@@ -313,11 +318,13 @@ public class PagerankPrep extends Configured implements Tool {
       idxOut.writeLong(currOff - prevOff);
       idxOut.write(IndexingConstants.IDX_END);
       prevOff = currOff;
-
+      System.out.print(".");
     }
+    System.out.print("\n");
 
     //copy to hdfs
     FileSystem fs = FileSystem.get(conf);
+    fs.mkdirs(nodePath);
     fs.copyFromLocalFile(false, true, localPath, nodePath);
   }
 }

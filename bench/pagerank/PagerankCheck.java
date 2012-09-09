@@ -1,18 +1,11 @@
 package bench.pagerank;
 
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.InputStreamReader;
 import java.io.IOException;
-import java.io.FileWriter;
-import java.io.FileInputStream;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DoubleWritable;
@@ -25,7 +18,7 @@ import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
-import org.apache.hadoop.map2.IndexedTextOutputFormat;
+import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.hadoop.util.Tool;
 
@@ -88,9 +81,9 @@ public class PagerankCheck extends Configured implements Tool {
       }
 
 			if (findMin)
-				context.write(key, new DoubleWritable(minValue));
+				context.write(key, new DoubleWritable(min));
 			else
-				context.write(key, new DoubleWritable(maxValue));
+				context.write(key, new DoubleWritable(max));
     }
   }
 
@@ -223,9 +216,8 @@ public class PagerankCheck extends Configured implements Tool {
     //read min and max value
     FileSystem fs = FileSystem.get(conf);
     FSDataInputStream in = fs.open(mmPath);
-    BufferedReader reader = new BufferedReader(
-        new InputStreamReader(FSDataInputStream));
-    double min, max;
+    BufferedReader reader = new BufferedReader(new InputStreamReader(in));
+    double min = 0, max = 1;
     while(true) {
       String lineText = reader.readLine();
       if (lineText == null) break;

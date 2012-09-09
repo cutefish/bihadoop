@@ -118,6 +118,7 @@
     <target name="compile" depends="compile-test, compile-bench">
     </target>
 
+    <property name="classargs" value=""/>
     <target name="runtest">
         <java
             fork="true"
