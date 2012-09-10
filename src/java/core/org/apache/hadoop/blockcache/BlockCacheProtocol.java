@@ -23,7 +23,8 @@ public interface BlockCacheProtocol extends VersionedProtocol {
    * The block contains the position required.
    * Throw IOException if cannot cache.
    */
-  public Block cacheBlockAt(String fsUri, String user, String path, long pos) 
+  public Block cacheBlockAt(String fsUri, String user, String path, 
+                            long versionId, long pos) 
       throws IOException;
 
   /**

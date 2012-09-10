@@ -79,8 +79,8 @@ public class PagerankMap2 extends Configured implements Tool {
      * Map.
      * input:
      * index format:
-     * matrix mat + "\t" + blockColId + "\t" + blockRowId
-     * vector vec + "\t" + blockRowId
+     * matrix "edge" + "\t" + blockColId + "\t" + blockRowId
+     * vector "node" + "\t" + blockRowId
      *
      * segments:
      * matrix block: rowId + "\t" + colId + "\t" + xferProb
@@ -98,39 +98,43 @@ public class PagerankMap2 extends Configured implements Tool {
                     final Context context)
         throws IOException, InterruptedException {
 
-      int matIdx = 0;
-      int vecIdx = 0;
-      if (indices[0].contains("mat")) {
-        matIdx = 0;
-        vecIdx = 1;
+      int edgeIdx = 0;
+      int nodeIdx = 0;
+      if (indices[0].contains("edge")) {
+        edgeIdx = 0;
+        nodeIdx = 1;
       }
       else {
-        vecIdx = 0;
-        matIdx = 1;
+        edgeIdx = 0;
+        nodeIdx = 1;
       }
       
       Segment[] segments = trSegs.segments;
 
-      Segment matSeg = segments[matIdx];
-      Segment vecSeg = segments[vecIdx];
+      Segment edgeSgmt = segments[edgeIdx];
+      Segment nodeSgmt = segments[nodeIdx];
 
       FSDataInputStream in;
       BufferedReader reader;
 
-      context.setStatus("reading vector: " + indices[vecIdx] + 
-                        " vecSeg: " + vecSeg);
+      Configuration conf = context.getConfiguration();
+      long edgeVersionId = conf.getLong("pagerank.edge.versionId", 0);
+      long nodeVersionId = conf.getLong("pagerank.node.versionId", 0);
+
+      context.setStatus("reading node vector: " + indices[nodeIdx] + 
+                        " nodeSgmt: " + nodeSgmt);
 
       HashMap<Integer, Double> prevRank = new HashMap<Integer, Double>();
       if (useCache) {
-        in = fs.openCachedReadOnly(vecSeg.getPath());
+        in = fs.openCachedReadOnly(nodeSgmt.getPath(), nodeVersionId);
       }
       else {
-        in = fs.open(vecSeg.getPath());
+        in = fs.open(nodeSgmt.getPath());
       }
-      in.seek(vecSeg.getOffset());
+      in.seek(nodeSgmt.getOffset());
       reader = new BufferedReader(new InputStreamReader(in));
       int bytesRead = 0;
-      while(bytesRead < vecSeg.getLength()) {
+      while(bytesRead < nodeSgmt.getLength()) {
         String lineText = reader.readLine();
         if (lineText == null) break;
         bytesRead += lineText.length() + 1;
@@ -152,23 +156,23 @@ public class PagerankMap2 extends Configured implements Tool {
       }
       in.close();
 
-      context.setStatus("reading matrix: " + indices[matIdx] + 
-                        " matSeg: " + matSeg);
+      context.setStatus("reading edge matrix: " + indices[edgeIdx] + 
+                        " edgeSgmt: " + edgeSgmt);
       if (useCache) {
-        in = fs.openCachedReadOnly(matSeg.getPath());
+        in = fs.openCachedReadOnly(edgeSgmt.getPath(), edgeVersionId);
       }
       else {
-        in = fs.open(matSeg.getPath());
+        in = fs.open(edgeSgmt.getPath());
       }
-      in.seek(matSeg.getOffset());
+      in.seek(edgeSgmt.getOffset());
       reader = new BufferedReader(new InputStreamReader(in));
       bytesRead = 0;
-      while (bytesRead < matSeg.getLength()) {
+      while (bytesRead < edgeSgmt.getLength()) {
         String lineText = reader.readLine();
         if (lineText == null) break;
         bytesRead += lineText.length() + 1;
-        trSegs.progress = (float) (in.getPos() - matSeg.getOffset()) / 
-            (float) matSeg.getLength();
+        trSegs.progress = (float) (in.getPos() - edgeSgmt.getOffset()) / 
+            (float) edgeSgmt.getLength();
 
         //ignore comment
         if (lineText.startsWith("#")) continue;
@@ -265,7 +269,7 @@ public class PagerankMap2 extends Configured implements Tool {
         sb.append("" + rowId + "\t" + elemCurrRank + "\n");
       }
 
-      context.write(new Text("vec\t" + key), 
+      context.write(new Text("node\t" + key), 
                     new Text(sb.toString()));
     }
   }
@@ -334,9 +338,11 @@ public class PagerankMap2 extends Configured implements Tool {
     System.out.println("Start iterating");
     boolean converged = false;
     start = System.currentTimeMillis();
+    conf.setLong("pagerank.edge.versionId", start);
     for (int i = 0; i < maxNumIterations; ++i) {
       //Every iteration we read from edgePath and nodePath and output to
       //outPath.
+      conf.setLong("pagerank.node.versionId", start + i);
       Job job = waitForJobFinish(configStage1());
       Counters c = job.getCounters();
       long changed = c.findCounter(PrCounters.CONVERGE_CHECK).getValue();
@@ -404,23 +410,23 @@ public class PagerankMap2 extends Configured implements Tool {
 
   public static class PagerankMap2Filter implements Map2Filter {
     public boolean accept(String idx0, String idx1) {
-      String matIdx;
-      String vecIdx;
-      if (idx0.contains("mat")) {
-        matIdx = idx0;
-        vecIdx = idx1;
+      String edgeIdx;
+      String nodeIdx;
+      if (idx0.contains("edge")) {
+        edgeIdx = idx0;
+        nodeIdx = idx1;
       }
       else {
-        matIdx = idx1;
-        vecIdx = idx0;
+        edgeIdx = idx1;
+        nodeIdx = idx0;
       }
-      String[] matId = matIdx.split("\t");
-      String[] vecId = vecIdx.split("\t");
-      if (matId.length != 3 || vecId.length != 2) return false;
+      String[] edgeId = edgeIdx.split("\t");
+      String[] nodeId = nodeIdx.split("\t");
+      if (edgeId.length != 3 || nodeId.length != 2) return false;
       try {
-        int matColId = Integer.parseInt(matId[2]);
-        int vecRowId = Integer.parseInt(vecId[1]);
-        if (matColId == vecRowId) return true;
+        int edgeColId = Integer.parseInt(edgeId[2]);
+        int nodeRowId = Integer.parseInt(nodeId[1]);
+        if (edgeColId == nodeRowId) return true;
       }
       catch(Exception e) {
         return false;

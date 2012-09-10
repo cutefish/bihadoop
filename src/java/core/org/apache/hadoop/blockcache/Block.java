@@ -17,6 +17,7 @@ import org.apache.hadoop.fs.Segment;
  * Block Information for the protocol, adding extra information to the segment.
  */
 public class Block extends Segment {
+  long versionId;
   boolean useReplica;
   String localPath;
 
@@ -41,6 +42,14 @@ public class Block extends Segment {
     return localPath;
   }
 
+  public long getVersion() {
+    return versionId;
+  }
+
+  public void setVersion(long versionId) {
+    this.versionId = versionId;
+  }
+
   public void setLocalPath(String localPath) {
     this.localPath = localPath;
   }
@@ -62,12 +71,14 @@ public class Block extends Segment {
 
   public void write(DataOutput out) throws IOException {
     super.write(out);
+    out.writeLong(versionId);
     out.writeBoolean(useReplica);
     Text.writeString(out, localPath);
   }
 
   public void readFields(DataInput in) throws IOException {
     super.readFields(in);
+    versionId = in.readLong();
     useReplica = in.readBoolean();
     localPath = Text.readString(in);
   }

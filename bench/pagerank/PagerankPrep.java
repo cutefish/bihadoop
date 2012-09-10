@@ -124,7 +124,7 @@ public class PagerankPrep extends Configured implements Tool {
       int blockRowId = rowId / blockSize;
       int blockColId = colId / blockSize;
 
-      Text newKey = new Text("mat" + "\t" + blockRowId + "\t" + blockColId);
+      Text newKey = new Text("edge" + "\t" + blockRowId + "\t" + blockColId);
 
       //key = blockId, value = value
       context.write(newKey, value);
@@ -304,7 +304,7 @@ public class PagerankPrep extends Configured implements Tool {
     for (int i = 0; i < numNodes; i += blockSize) {
       //in each block write a block and an index
       int max = i + blockSize;
-      String blockId = "vec" + "\t" + i / blockSize;
+      String blockId = "node" + "\t" + i / blockSize;
       StringBuilder sb = new StringBuilder();
       for (int j = i; j < max; ++j) {
         sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");

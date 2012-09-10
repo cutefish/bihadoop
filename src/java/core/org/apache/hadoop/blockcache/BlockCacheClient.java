@@ -38,10 +38,11 @@ public class BlockCacheClient implements java.io.Closeable {
         serverAddr, conf, RPC_TIME_OUT);
   }
 
-  public FSDataInputStream open(Path f, int bufferSize, 
+  public FSDataInputStream open(Path f, long versionId, int bufferSize, 
                                 FileSystem fs) throws IOException {
     LOG.debug("openning FSDataInputStream for path: " + f);
-    return new FSDataInputStream(new CachedFSInputStream(f, bufferSize, fs));
+    return new FSDataInputStream(new CachedFSInputStream(f, versionId,
+                                                         bufferSize, fs));
   }
 
   public void close() {
@@ -64,6 +65,7 @@ public class BlockCacheClient implements java.io.Closeable {
     private FileInputStream localIn = null;
     private FSInputStream backupIn = null;
     private final Path src;
+    private long versionId;
     private long pos = 0;
 
     //block status
@@ -72,9 +74,10 @@ public class BlockCacheClient implements java.io.Closeable {
     private long blockEnd = 0;
     //To Do: maybe have a better protocol to return the file resource?
 
-    public CachedFSInputStream(Path f, int bufferSize, 
+    public CachedFSInputStream(Path f, long versionId, int bufferSize, 
                                FileSystem fs) throws IOException {
       this.src = f;
+      this.versionId = versionId;
       this.fs = fs;
       this.backupIn = fs.getInputStream(f, bufferSize);
       LOG.debug("opened CachedFSInputStream");
@@ -193,7 +196,8 @@ public class BlockCacheClient implements java.io.Closeable {
       LOG.debug("Updating status");
       Block block = server.cacheBlockAt(fs.getUri().toString(),
                                         ugi.getUserName(),
-                                        src.toUri().toString(), pos);
+                                        src.toUri().toString(), 
+                                        versionId, pos);
       LOG.debug("Cached block returned");
       blockStart = block.getOffset();
       blockEnd = blockStart + block.getLength();

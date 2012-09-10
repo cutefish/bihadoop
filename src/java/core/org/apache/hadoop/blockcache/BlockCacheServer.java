@@ -88,6 +88,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     cache = new Cache();
     freeStoreThread = new Thread(freeStore);
     freeStoreThread.setDaemon(true);
+    freeStoreThread.start();
 
     //server
     int port = conf.getInt(
@@ -311,6 +312,15 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       }
     }
 
+    void remove(String user, Block b) {
+      pathCache.remove(b.getPath());
+      synchronized(blockCache) {
+        CachedBlocks blocks = blockCache.get(user);
+        if (blocks == null) return;
+        blocks.remove(b);
+      }
+    }
+
     Segments getSegments(String user) {
       synchronized(blockCache) {
         CachedBlocks blocks = blockCache.get(user);
@@ -375,7 +385,19 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
           }
           freeStore.add(toRemove);
           sizeToRemove -= toRemove.getLength();
+          currSize -= toRemove.getLength();
         }
+      }
+
+      public void remove(Block b) {
+        if (b == null) return;
+        blockQueue.remove(b);
+        Path path = b.getPath();
+        if (!removeFromBlockLists(path, b)) {
+          LOG.error("inconsistency in CachedBlocks");
+        }
+        freeStore.add(b);
+        currSize -= b.getLength();
       }
 
       /**
@@ -443,8 +465,10 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
 
     void add(Block b) {
       synchronized(deleteList) {
+        LOG.info("Deleting block: " + b.getSegment().toString());
         deleteList.add(b);
         if (deleteList.size() > NUM_BLOCK_THRESHOLD) {
+          LOG.info("Delete process wake up.");
           deleteList.notify();
         }
       }
@@ -454,22 +478,26 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       while(shouldRun) {
         synchronized(deleteList) {
           if (!deleteList.isEmpty()) {
+            LOG.info("Free Store Cleaning up");
             for (Block b : deleteList) {
               String file = b.getLocalPath();
-              boolean success = (new File(file)).delete();
-              if (!success) {
-                LOG.warn("CacheFileFreeStore delete file failed," + 
-                         " file: " +  file);
-              }
-              else {
-                LOG.debug("CacheFileFreeStore delete file succeeded," + 
-                         " file: " +  file);
+              if (file != "") {
+                boolean success = (new File(file)).delete();
+                if (!success) {
+                  LOG.warn("CacheFileFreeStore delete file failed," + 
+                           " file: " +  file);
+                }
+                else {
+                  LOG.debug("CacheFileFreeStore delete file succeeded," + 
+                            " file: " +  file);
+                }
               }
             }
+            deleteList.clear();
           }
           else {
             try {
-              deleteList.wait(1000);
+              deleteList.wait(10000);
             }
             catch(InterruptedException e) {
             }
@@ -487,8 +515,8 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     return BlockCacheProtocol.versionID;
   }
 
-  public Block cacheBlockAt(String fsUriStr, String user, 
-                            String pathStr, long pos) throws IOException {
+  public Block cacheBlockAt(String fsUriStr, String user, String pathStr, 
+                            long versionId, long pos) throws IOException {
     LOG.debug("Caching block at" + 
               " user: " + user + 
               " fs: " + fsUriStr + 
@@ -511,8 +539,21 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     Block block = cache.get(user, path, pos);
     //already cached
     if (block != null) {
-      LOG.debug("Block already exists");
-      return waitOrConstructBlock(false, block, null, user);
+      if (block.getVersion() == versionId) {
+        LOG.debug("Block already exists with version: " + versionId);
+        return waitOrConstructBlock(false, block, null, user, versionId);
+      }
+      else {
+        LOG.info("Block with staled version: " + block.getVersion() + 
+                  " required version: " + versionId + 
+                  ". Removing block at: " + 
+                  " user: " + user + 
+                  " path: " + block.getPath() + 
+                  " off: " + block.getOffset() + 
+                  " len: " + block.getLength());
+        //remove that block
+        cache.remove(user, block);
+      }
     }
     //not cached, try to cache it
     PathInfo info = cache.get(path);
@@ -545,14 +586,17 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
               " len: " + len + 
               " isLocal: " + isLocal);
     block = cache.get(user, path, off);
+    block.setVersion(versionId);
     if (isLocal) return block;
     //caching remote block
-    return waitOrConstructBlock(first, block, info, user);
+    block = waitOrConstructBlock(first, block, info, user, versionId);
+    block.setVersion(versionId);
+    return block;
   }
 
   private Block waitOrConstructBlock(
-      boolean first, Block block, 
-      PathInfo info, String user) throws IOException{
+      boolean first, Block block, PathInfo info, 
+      String user, long versionId) throws IOException{
     if (block == null) {
       LOG.error(cache.getSegments(user));
       throw new IOException("block null");
@@ -563,7 +607,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     long len = block.getLength();
     if (first) {
       synchronized(block) {
-        String localPath = createLocalPath(user, block);
+        String localPath = createLocalPath(user, block, versionId);
         FileOutputStream out;
         try {
           out = new FileOutputStream(localPath);
@@ -647,7 +691,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     return local;
   }
 
-  private String createLocalPath(String user, Block block) 
+  private String createLocalPath(String user, Block block, long versionId) 
       throws IOException {
     File dir = new File(localCacheDir, user);
     if (!dir.exists()) {
@@ -657,6 +701,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       }
     }
     String name = block.toString().replace('/', '#');
+    name = name + "#" + versionId;
     return localCacheDir + "/" + user + "/" + name;
   }
 
