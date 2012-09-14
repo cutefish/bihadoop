@@ -8,6 +8,7 @@ import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.IntWritable;
@@ -45,6 +46,11 @@ public class PagerankCheck extends Configured implements Tool {
 				return;
 
 			final String[] line = lineText.split("\t");
+      if (line.length != 2) {
+        System.out.println("irregular line: " + lineText);
+        return;
+      }
+
 			double pagerank = Double.parseDouble(line[1]);
 			context.write(new IntWritable(0) , new DoubleWritable(pagerank));
 			context.write(new IntWritable(1) , new DoubleWritable(pagerank));
@@ -115,6 +121,10 @@ public class PagerankCheck extends Configured implements Tool {
 				return;
 
 			final String[] line = lineText.split("\t");
+      if (line.length != 2) {
+        System.out.println("irregular line: " + lineText);
+        return;
+      }
 			double pagerank = Double.parseDouble(line[1]);
 			int distrIndex = (int)(histWidth * (pagerank - min)/gap) + 1;
 			if(distrIndex == histWidth + 1)
@@ -154,7 +164,7 @@ public class PagerankCheck extends Configured implements Tool {
   public static void main(final String[] args) {
     try {
       final int result = ToolRunner.run(new Configuration(), 
-                                        new PagerankPrep(),
+                                        new PagerankCheck(),
                                         args);
       System.exit(result);
     }
@@ -165,7 +175,7 @@ public class PagerankCheck extends Configured implements Tool {
   }
 
   protected static int printUsage() {
-    System.out.println("PagerankPrep <inPath> <mmPath> <distPath>");
+    System.out.println("PagerankCheck <inPath> <mmPath> <distPath>");
     return -1;
   }
 
@@ -208,6 +218,7 @@ public class PagerankCheck extends Configured implements Tool {
     job.setOutputKeyClass(IntWritable.class);
     job.setOutputValueClass(DoubleWritable.class);
 		FileInputFormat.setInputPaths(job, inPath);  
+    FileInputFormat.setInputPathFilter(job, ExcludeIndexFilter.class);
 		FileOutputFormat.setOutputPath(job, mmPath);  
 		return job;
   }
@@ -215,7 +226,7 @@ public class PagerankCheck extends Configured implements Tool {
   protected Job configStage2() throws Exception {
     //read min and max value
     FileSystem fs = FileSystem.get(conf);
-    FSDataInputStream in = fs.open(mmPath);
+    FSDataInputStream in = fs.open(new Path(mmPath, "part-r-00000"));
     BufferedReader reader = new BufferedReader(new InputStreamReader(in));
     double min = 0, max = 1;
     while(true) {
@@ -230,6 +241,7 @@ public class PagerankCheck extends Configured implements Tool {
 		conf.set("pagerank.min.pr", "" + min);
 		conf.set("pagerank.max.pr", "" + max);
     Job job = new Job(conf, "PagerankCheck");
+    job.setJarByClass(PagerankCheck.class);
 		job.setMapperClass(MapStage2.class);        
 		job.setReducerClass(RedStage2.class);
 		job.setCombinerClass(RedStage2.class);
@@ -237,8 +249,18 @@ public class PagerankCheck extends Configured implements Tool {
 		job.setOutputValueClass(IntWritable.class);
 		job.setNumReduceTasks(1);
 		FileInputFormat.setInputPaths(job, inPath);  
+    FileInputFormat.setInputPathFilter(job, ExcludeIndexFilter.class);
 		FileOutputFormat.setOutputPath(job, distPath);  
     return job;
+  }
+
+  static class ExcludeIndexFilter implements PathFilter {
+    public boolean accept(Path p) {
+      if (p.toString().endsWith(".map2idx")) {
+        return false;
+      }
+      return true;
+    }
   }
 
 }

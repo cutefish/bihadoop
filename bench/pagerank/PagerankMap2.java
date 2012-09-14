@@ -25,6 +25,7 @@ import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapreduce.Counters;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
@@ -65,12 +66,14 @@ public class PagerankMap2 extends Configured implements Tool {
                         Text, Text> {
     FileSystem fs;
     int blockSize;
+    int numNodes;
     boolean useCache;
 
     public void setup(Context context)
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
       fs = FileSystem.get(conf);
+      numNodes = conf.getInt("pagerank.num.nodes", 1);
       blockSize = conf.getInt("pagerank.block.size", 1);
       useCache = conf.getBoolean("pagerank.useCache", true);
     }
@@ -120,11 +123,13 @@ public class PagerankMap2 extends Configured implements Tool {
       Configuration conf = context.getConfiguration();
       long edgeVersionId = conf.getLong("pagerank.edge.versionId", 0);
       long nodeVersionId = conf.getLong("pagerank.node.versionId", 0);
+      long start, end;
 
       context.setStatus("reading node vector: " + indices[nodeIdx] + 
                         " nodeSgmt: " + nodeSgmt);
 
       HashMap<Integer, Double> prevRank = new HashMap<Integer, Double>();
+      start = System.currentTimeMillis();
       if (useCache) {
         in = fs.openCachedReadOnly(nodeSgmt.getPath(), nodeVersionId);
       }
@@ -138,26 +143,33 @@ public class PagerankMap2 extends Configured implements Tool {
         String lineText = reader.readLine();
         if (lineText == null) break;
         bytesRead += lineText.length() + 1;
-        //ignore comment
+        //ignore comment and blank line
         if (lineText.startsWith("#")) continue;
+        if (lineText.equals("")) continue;
+
         String[] line = lineText.split("\t");
         //ignore ill-formed lines
         try {
           int rowId = Integer.parseInt(line[0]);
           double rank = Double.parseDouble(line[1]);
           prevRank.put(rowId, rank);
-          int blockRowId = rowId / blockSize;
+          //int blockRowId = rowId / blockSize;
+          int blockRowId = rowId %(numNodes / blockSize);
           context.write(new Text("" + blockRowId),
                         new Text("" + rowId + "\t" + rank + "\tprev"));
         }
         catch(Exception e) {
-          continue;
+          System.out.println("" + e + ", on line: " + lineText);
         }
       }
       in.close();
+      end = System.currentTimeMillis();
+      System.out.println("Processed node in " + (end - start) + " ms");
+      System.out.println("Node processing bandwidth: " + bytesRead / (end - start) / 1000 + " MByte/s");
 
       context.setStatus("reading edge matrix: " + indices[edgeIdx] + 
                         " edgeSgmt: " + edgeSgmt);
+      start = System.currentTimeMillis();
       if (useCache) {
         in = fs.openCachedReadOnly(edgeSgmt.getPath(), edgeVersionId);
       }
@@ -174,8 +186,10 @@ public class PagerankMap2 extends Configured implements Tool {
         trSegs.progress = (float) (in.getPos() - edgeSgmt.getOffset()) / 
             (float) edgeSgmt.getLength();
 
-        //ignore comment
+        //ignore comment and blank
         if (lineText.startsWith("#")) continue;
+        if (lineText.equals("")) continue;
+
         String[] line = lineText.split("\t");
         //ignore ill-formed lines
         int rowId, colId;
@@ -184,17 +198,26 @@ public class PagerankMap2 extends Configured implements Tool {
           rowId = Integer.parseInt(line[0]);
           colId = Integer.parseInt(line[1]);
           xferProb = Double.parseDouble(line[2]);
-          double rank = prevRank.get(colId);
+          Double rank = prevRank.get(colId);
+          if (rank == null) {
+            continue;
+//            throw new NullPointerException("PrevRank for id: " + colId + 
+//                                           " not found");
+          }
           partialRank = xferProb * rank;
-          int blockRowId = rowId / blockSize;
+          //int blockRowId = rowId / blockSize;
+          int blockRowId = rowId % (numNodes / blockSize);
           context.write(new Text("" + blockRowId),
                         new Text("" + rowId + "\t" + partialRank));
         }
         catch (Exception e) {
-          continue;
+          System.out.println("" + e + ", on line: " + lineText);
         }
       }
       in.close();
+      end = System.currentTimeMillis();
+      System.out.println("Processed edge in " + (end - start) + " ms");
+      System.out.println("Edge processing bandwidth: " + bytesRead / (end - start) / 1000 + " MByte/s");
     }
   }
 
@@ -230,8 +253,8 @@ public class PagerankMap2 extends Configured implements Tool {
                        final Iterable<Text> values,
                        final Context context) 
         throws IOException, InterruptedException {
-      TreeMap<Integer, Double> prevRank = new TreeMap<Integer, Double>();
-      TreeMap<Integer, Double> currRank = new TreeMap<Integer, Double>();
+      HashMap<Integer, Double> prevRank = new HashMap<Integer, Double>();
+      HashMap<Integer, Double> currRank = new HashMap<Integer, Double>();
       for (Text val : values) {
         String[] record = val.toString().split("\t");
         //if its a prev rank record
@@ -252,9 +275,17 @@ public class PagerankMap2 extends Configured implements Tool {
       }
 
       StringBuilder sb = new StringBuilder();
+      int total = currRank.size();
+      int mileStore = total / 100;
+      int count = 0;
       for (Map.Entry<Integer, Double> entry : currRank.entrySet()) {
+        count ++;
         int rowId = entry.getKey();
         Double elemPrevRank = prevRank.get(rowId);
+        if (elemPrevRank == null) {
+          throw new NullPointerException("PrevRank for id: " + rowId + 
+                                         " not found");
+        }
         double xferProb = entry.getValue();
         //add the coefficients
         //alpha / |G| + (1 - alpha) * rank
@@ -267,6 +298,9 @@ public class PagerankMap2 extends Configured implements Tool {
           }
         }
         sb.append("" + rowId + "\t" + elemCurrRank + "\n");
+        if (count % mileStore == 0) {
+          context.progress();
+        }
       }
 
       context.write(new Text("node\t" + key), 
@@ -279,9 +313,10 @@ public class PagerankMap2 extends Configured implements Tool {
    ***************************************************************************/
 
   protected Path inPath = null;
-  protected Path outPath = null;
-  protected Path nodePath = null;
   protected Path edgePath = null;
+  protected Path outPath = null;
+  protected Path initNodePath = null;
+  protected Path nodePath = null;
   protected Configuration conf = null;
 
   public static void main(final String[] args) {
@@ -298,7 +333,7 @@ public class PagerankMap2 extends Configured implements Tool {
   }
 
   protected static int printUsage() {
-    System.out.println("PagerankMap2 <inPath> <outPath>");
+    System.out.println("PagerankMap2 <edgePath> <outPath>");
     return -1;
   }
 
@@ -317,21 +352,41 @@ public class PagerankMap2 extends Configured implements Tool {
     long start, end;
 
     edgePath = new Path(inPath.getParent(), "blkedge");
+    initNodePath = new Path(inPath.getParent(), "initialNodeRank");
     nodePath = new Path(inPath.getParent(), "blknode");
 
     if (conf.getBoolean("pagerank.initialize", true)) {
+      fs.delete(initNodePath, true);
       fs.delete(edgePath, true);
-      fs.delete(nodePath, true);
-      String[] prepArgs = {inPath.toString(), 
-        edgePath.toString(), nodePath.toString()};
-      System.out.println("Tranforming edges and nodes");
+      System.out.println("Generating initial node");
+      PagerankPrep.initNode(initNodePath);
+      System.out.println("done");
+      String[] prepArgs = {inPath.toString(), edgePath.toString()};
+      System.out.println("Tranforming edges");
       start = System.currentTimeMillis();
       PagerankPrep.main(prepArgs);
       end = System.currentTimeMillis();
       System.out.println("===map2 experiment===<time>[PagerankPrep]: " + 
                        (end - start) + " ms");
     }
+    else {
+      if (!fs.exists(initNodePath)) {
+        System.out.println("Generating initial node");
+        PagerankPrep.initNode(initNodePath);
+        System.out.println("done");
+      }
+      if (!fs.exists(edgePath)) {
+        String[] prepArgs = {inPath.toString(), edgePath.toString()};
+        System.out.println("Tranforming edges");
+        start = System.currentTimeMillis();
+        PagerankPrep.main(prepArgs);
+        end = System.currentTimeMillis();
+        System.out.println("===map2 experiment===<time>[PagerankPrep]: " + 
+                           (end - start) + " ms");
+      }
+    }
 
+    fs.delete(nodePath, true);
     fs.delete(outPath, true);
     int maxNumIterations = conf.getInt("pagerank.max.num.iteration", 100);
 
@@ -340,22 +395,32 @@ public class PagerankMap2 extends Configured implements Tool {
     start = System.currentTimeMillis();
     conf.setLong("pagerank.edge.versionId", start);
     for (int i = 0; i < maxNumIterations; ++i) {
-      //Every iteration we read from edgePath and nodePath and output to
-      //outPath.
+      long iterStart = System.currentTimeMillis();
+      Job job;
       conf.setLong("pagerank.node.versionId", start + i);
-      Job job = waitForJobFinish(configStage1());
+      if (i == 0) {
+        //first iteration read from initNodePath
+        job = waitForJobFinish(configStage0());
+      }
+      else {
+        //Every iteration we read from edgePath and nodePath and output to
+        //outPath.
+        job = waitForJobFinish(configStage1());
+      }
       Counters c = job.getCounters();
       long changed = c.findCounter(PrCounters.CONVERGE_CHECK).getValue();
       System.out.println("Iteration: " + i + " changed: " + changed);
       if (changed == 0) {
         System.out.println("Converged.");
-        fs.delete(edgePath);
         fs.delete(nodePath);
         converged = true;
         break;
       }
       fs.delete(nodePath);
       fs.rename(outPath, nodePath);
+      long iterEnd = System.currentTimeMillis();
+      System.out.println("===map2 experiment===<iter time>[PagerankMap2Iterative]: " + 
+                         (iterEnd - iterStart) + " ms");
     }
     end = System.currentTimeMillis();
     System.out.println("===map2 experiment===<time>[PagerankMap2Iterative]: " + 
@@ -367,9 +432,6 @@ public class PagerankMap2 extends Configured implements Tool {
     }
     if (conf.getBoolean("pagerank.keep.intermediate", false)) {
       FileUtil.copy(fs, outPath, fs, nodePath, false, true, conf);
-    }
-    else {
-      fs.delete(edgePath);
     }
     return 1;
   }
@@ -391,9 +453,26 @@ public class PagerankMap2 extends Configured implements Tool {
     return job;
   }
 
+  private Job configStage0() throws Exception {
+    int numReducers = conf.getInt("pagerank.num.reducers", 1);
+    Job job = new Job(conf, "PagerankMap2Stage0");
+    job.setJarByClass(PagerankMap2.class);
+    job.setMapperClass(MapStage1.class);
+    job.setReducerClass(RedStage1.class);
+    job.setNumReduceTasks(numReducers);
+    job.setOutputKeyClass(Text.class);
+    job.setOutputValueClass(Text.class);
+    job.setInputFormatClass(Map2InputFormat.class);
+    Map2InputFormat.setIndexFilter(job, PagerankMap2Filter.class);
+    Map2InputFormat.setInputPaths(job, edgePath, initNodePath);
+    job.setOutputFormatClass(PagerankMap2OutputFormat.class);
+    FileOutputFormat.setOutputPath(job, outPath);
+    return job;
+  }
+
   private Job configStage1() throws Exception {
     int numReducers = conf.getInt("pagerank.num.reducers", 1);
-    Job job = new Job(conf, "PagerankMap2");
+    Job job = new Job(conf, "PagerankMap2Stage1");
     job.setJarByClass(PagerankMap2.class);
     job.setMapperClass(MapStage1.class);
     job.setReducerClass(RedStage1.class);

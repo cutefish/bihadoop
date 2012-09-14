@@ -23,20 +23,24 @@ public class Map2Split extends SegmentedSplit {
   //A Map2Split can have multiple segments;
   private Segment[] segs;
   private String[] indices;
+  //cover segment that will be cached
+  private Segment[] coverSegs;
   //String[] = hosts[i] represents locations for a segment.
   private String[][] hosts; 
 
   Map2Split() { }
 
   public Map2Split(Segment[] segs) {
-    this(segs, (String[])null, (String[][])null);
+    this(segs, (String[])null, segs, (String[][])null);
   }
 
   public Map2Split(Segment[] segs, 
                    String[] indices, 
+                   Segment[] coverSegs, 
                    String[][] hosts) {
     this.segs = segs;
     this.indices = indices;
+    this.coverSegs = coverSegs;
     this.hosts = hosts;
   }
 
@@ -44,7 +48,13 @@ public class Map2Split extends SegmentedSplit {
     StringBuilder ret = new StringBuilder();
     ret.append("[");
     for (int i = 0; i < segs.length; ++i) {
+      ret.append("@");
+      ret.append(indices[i]);
+      ret.append("@ ");
       ret.append(segs[i].toString());
+      ret.append("(");
+      ret.append(coverSegs[i].toString());
+      ret.append(")");
       ret.append(", ");
     }
     ret.append("]");
@@ -84,6 +94,15 @@ public class Map2Split extends SegmentedSplit {
     }
   }
 
+  public Segment[] getCoverSegments() throws IOException {
+    if (this.coverSegs == null) {
+      return new Segment[]{};
+    }
+    else {
+      return this.coverSegs;
+    }
+  }
+
   public String[][] getHosts() throws IOException {
     if (this.hosts == null) {
       return new String[][]{ };
@@ -101,6 +120,14 @@ public class Map2Split extends SegmentedSplit {
     return ret;
   }
 
+  public long getCoverLength() {
+    long ret = 0;
+    for (Segment seg : coverSegs) {
+      ret += seg.getLength();
+    }
+    return ret;
+  }
+
   //////////////////////////////////////////////////
   // Writable
   //////////////////////////////////////////////////
@@ -112,7 +139,9 @@ public class Map2Split extends SegmentedSplit {
          });
   }
 
-  //segments are needed for both user mapper and scheduler
+  //segments and indices are needed for both user mapper and scheduler
+  //cover segments and locations are only needed by scheduler so we do not write
+  //here.
   public void write(DataOutput out) throws IOException {
     out.writeInt(segs.length);
     for (int i = 0; i < segs.length; ++i) {

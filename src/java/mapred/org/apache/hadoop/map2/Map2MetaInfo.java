@@ -39,11 +39,13 @@ public class Map2MetaInfo {
 
   //ToDo: support set instead of pair
   private List<Segment[]> segList;
+  private Map<Segment, Segment> coverSegMap;
   private Map<SegmentPair, Integer> segTaskMap;
   private Map<String, List<Segment>> localityMap;
 
   public Map2MetaInfo() {
     segList = new ArrayList<Segment[]>();
+    coverSegMap = new HashMap<Segment, Segment>();
     segTaskMap = new HashMap<SegmentPair, Integer>();
     localityMap = new HashMap<String, List<Segment>>();
   }
@@ -72,6 +74,9 @@ public class Map2MetaInfo {
       for (int j = 0; j < 2; ++j) {
         segs[j] = new Segment();
         segs[j].readFields(in);
+        Segment coverSeg = new Segment();
+        coverSeg.readFields(in);
+        coverSegMap.put(segs[j], coverSeg);
         int numLocs = WritableUtils.readVInt(in);
         for (int k = 0; k < numLocs; ++k) {
           String loc = Text.readString(in);
@@ -81,10 +86,10 @@ public class Map2MetaInfo {
             localityMap.put(loc, localList);
           }
           //insert with order, assuming segments do not overlap
-          int idx = Collections.binarySearch(localList, segs[j]);
+          int idx = Collections.binarySearch(localList, coverSeg);
           if (idx < 0) {
             idx = -(idx + 1);
-            localList.add(idx, segs[j]);
+            localList.add(idx, coverSeg);
           }
         }
       }
@@ -148,6 +153,10 @@ public class Map2MetaInfo {
     return segList;
   }
 
+  public Map<Segment, Segment> getCoverMap() {
+    return coverSegMap;
+  }
+
   public Segments getLocalSegments(String host) {
     List<Segment> list = localityMap.get(host);
     if (list == null) return new Segments(new ArrayList<Segment>(0));
@@ -160,7 +169,10 @@ public class Map2MetaInfo {
     for (Segment[] segs : segList) {
       sb.append("[");
       for (Segment seg : segs) {
-        sb.append(seg.toString() + ", ");
+        sb.append(seg.toString());
+        sb.append("(");
+        sb.append(coverSegMap.get(seg).toString());
+        sb.append("),");
       }
       sb.append("]\n");
     }

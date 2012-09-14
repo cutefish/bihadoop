@@ -196,6 +196,7 @@ public class PagerankNaive extends Configured implements Tool {
   //////////////////////////////////////////////////////////////////////
   protected Configuration conf;
   protected Path edgePath = null;
+  protected Path initNodePath = null;
   protected Path nodePath = null;
   protected Path tmpPath = null;
   protected Path outPath = null;
@@ -212,7 +213,7 @@ public class PagerankNaive extends Configured implements Tool {
   // Print the command-line usage text.
   protected static int printUsage ()
   {
-    System.out.println("PagerankNaive <inPath> <outPath>");
+    System.out.println("PagerankNaive <edgePath> <outPath>");
     return -1;
   }
 
@@ -226,10 +227,12 @@ public class PagerankNaive extends Configured implements Tool {
     long start, end;
 
 		edgePath = new Path(args[0]);
+    outPath = new Path(args[1]);
+		initNodePath = new Path(edgePath.getParent(), "initialNodeRank");
     nodePath = new Path(edgePath.getParent(), "node");
     tmpPath = new Path(edgePath.getParent(), "tmp");
-    outPath = new Path(args[1]);
     System.out.println(edgePath);
+    System.out.println(initNodePath);
     System.out.println(outPath);
     System.out.println(nodePath);
     System.out.println(tmpPath);
@@ -243,8 +246,13 @@ public class PagerankNaive extends Configured implements Tool {
     fs.delete(tmpPath);
 
     if (conf.getBoolean("pagerank.initialize", true)) {
-      fs.delete(nodePath);
+      fs.delete(initNodePath);
       genInitNodeRanks();
+    }
+    else {
+      if (!fs.exists(initNodePath)) {
+        genInitNodeRanks();
+      }
     }
 
     int maxNumIterations = conf.getInt("pagerank.max.num.iteration", 100);
@@ -252,8 +260,18 @@ public class PagerankNaive extends Configured implements Tool {
     boolean converged = false;
     start = System.currentTimeMillis();
 		for (int i = 0; i < maxNumIterations; ++i) {
-      waitForJobFinish(configStage1());
-      Job job = waitForJobFinish(configStage2());
+      long iterStart = System.currentTimeMillis();
+      Job job;
+
+      //first iteration
+      if (i == 0) {
+        waitForJobFinish(configStage0());
+        job = waitForJobFinish(configStage2());
+      }
+      else {
+        waitForJobFinish(configStage1());
+        job = waitForJobFinish(configStage2());
+      }
 
 			// The counter is newly created per every iteration.
 			Counters c = job.getCounters();
@@ -270,6 +288,9 @@ public class PagerankNaive extends Configured implements Tool {
 			fs.delete(tmpPath);
 			fs.delete(nodePath);
 			fs.rename(outPath, nodePath);
+      long iterEnd = System.currentTimeMillis();
+      System.out.println("===map2 experiment===<iter time>[PagerankNaiveIterative]: " + 
+                         (iterEnd - iterStart) + " ms");
 		}
     end = System.currentTimeMillis();
     System.out.println("===map2 experiment===<time>[PagerankNaiveIterative]: " + 
@@ -300,7 +321,24 @@ public class PagerankNaive extends Configured implements Tool {
     System.out.print("\n");
     //copy to hdfs
     FileSystem fs = FileSystem.get(conf);
-    fs.copyFromLocalFile(false, true, new Path(localPath), nodePath);
+    fs.copyFromLocalFile(false, true, new Path(localPath), 
+                         initNodePath);
+  }
+
+  // Configure pass0
+  // input on initial node
+  protected Job configStage0() throws Exception {
+    int numReducers = conf.getInt("pagerank.num.reducers", 1);
+    Job job = new Job(conf, "PagerankNaiveStage0");
+    job.setJarByClass(PagerankNaive.class);
+    job.setMapperClass(MapStage1.class);
+		job.setReducerClass(RedStage1.class);
+    job.setNumReduceTasks(numReducers);
+    job.setOutputKeyClass(IntWritable.class);
+    job.setOutputValueClass(Text.class);
+		FileInputFormat.setInputPaths(job, edgePath, initNodePath);  
+		FileOutputFormat.setOutputPath(job, tmpPath);  
+		return job;
   }
 
   // Configure pass1

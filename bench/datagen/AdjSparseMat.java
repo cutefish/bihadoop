@@ -38,7 +38,7 @@ public class AdjSparseMat extends DataGenerator {
   Path outPath;
 
   private void genMatrix() throws IOException {
-    File local = new File("/tmp/matrix");
+    File local = new File("/tmp/edge");
     FileOutputStream file = new FileOutputStream(local);
     DataOutputStream out = new DataOutputStream(file);
     Random r = new Random();

@@ -213,6 +213,18 @@ public class JobSplitWriter {
   }
 
   //Added by xyu40@gatech.edu
+  //
+  //Format:
+  //
+  //MAP2-INFO |
+  //NUM_SPLITS
+  //NUM_SEGMENTS | 
+  //SEGMENT; COVERSEGMENT; LOC1, LOC2, ...; |
+  //SEGMENT; COVERSEGMENT; LOC1, LOC2, ...; |
+  //...
+  //NUM_SEGMENTS |
+  //SEGMENT; COVERSEGMENT; LOC1, LOC2, ...; |
+  //SEGMENT; COVERSEGMENT; LOC1, LOC2, ...; |
   private static <T extends InputSplit> void writeJobMap2MetaInfo(
       FileSystem fs, Path filename, FsPermission p, T[] splits) 
       throws IOException{
@@ -222,10 +234,12 @@ public class JobSplitWriter {
     for (T inputSplit : splits) {
       Map2Split split = (Map2Split) inputSplit;
       Segment[] segs = split.getSegments();
+      Segment[] coverSegs = split.getCoverSegments();
       WritableUtils.writeVInt(out, segs.length);
       //write segments and its location
       for (int i = 0; i < segs.length; ++i) {
         segs[i].write(out);
+        coverSegs[i].write(out);
         String[] hosts = split.getHosts()[i];
         WritableUtils.writeVInt(out, hosts.length);
         for (int j = 0; j < hosts.length; ++j) {

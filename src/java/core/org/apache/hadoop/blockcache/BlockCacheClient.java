@@ -23,7 +23,7 @@ public class BlockCacheClient implements java.io.Closeable {
   private static final Log LOG = LogFactory.getLog(BlockCacheClient.class);
 
   private static final String LOCAL_HOST = "127.0.0.1";
-  private static final int RPC_TIME_OUT = 10000; //10 seconds 
+  private static final int RPC_TIME_OUT = 20000; //20 seconds 
 
   private final UserGroupInformation ugi;
   private BlockCacheProtocol server;
@@ -121,27 +121,30 @@ public class BlockCacheClient implements java.io.Closeable {
               (int)(blockEnd - pos) : len;
           switch (state) {
             case REPLICA:
+              LOG.debug("Read replica local");
               n = backupIn.read(buf, off, maxLength);
               pos += n;
-              LOG.debug("Read replica local");
               return n;
             case CACHE:
               //use try catch so that we can try again
+              LOG.debug("Read cache local");
               try {
                 n = localIn.read(buf, off, maxLength);
-                pos += n;
                 if (n < 0) 
                   throw new IOException("Unexpected eof:" + 
                                         " pos: " + pos + 
                                         " blockEnd: " + blockEnd);
-                LOG.debug("Read cache local");
+                pos += n;
                 return n;
               }
-              catch (IOException e) {
+              catch (Exception e) {
                 LOG.warn("Read cache local failed: " + 
                          StringUtils.stringifyException(e));
-                localIn.close();
-                localIn = null;
+                if (localIn != null) {
+                  localIn.close();
+                  localIn = null;
+                }
+                state = ReadState.REMOTE;
               }
             case EOF:
               return -1;
@@ -155,9 +158,10 @@ public class BlockCacheClient implements java.io.Closeable {
           try {
             updateState();
           }
-          catch (IOException e) {
+          catch (Exception e) {
             LOG.warn("Error update state from server: " + 
                      StringUtils.stringifyException(e));
+            state = ReadState.REMOTE;
             break;
           }
           shouldUpdateState = false;
@@ -169,7 +173,6 @@ public class BlockCacheClient implements java.io.Closeable {
       //we are here because we failed again during or after state update
       //just use back up stream for one block
       //this is very inefficient(high latency), but we expect it is rare.
-      LOG.debug("Reading using remote stream");
       FileStatus file = fs.getFileStatus(src);
       if (pos >= file.getLen()) return -1;
       BlockLocation[] blocks = fs.getFileBlockLocations(file, pos, 1);
@@ -183,6 +186,9 @@ public class BlockCacheClient implements java.io.Closeable {
       }
       blockStart = blocks[0].getOffset();
       blockEnd = blockStart + blocks[0].getLength();
+      LOG.info("Reading using remote stream on block: " + 
+               blockStart + "-" + blocks[0].getLength() + 
+               " pos: " + pos);
       int maxLength = (pos + len > blockEnd) ? 
           (int)(blockEnd - pos) : len;
       backupIn.seek(pos);

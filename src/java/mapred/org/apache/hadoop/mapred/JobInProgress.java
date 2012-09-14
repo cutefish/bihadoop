@@ -763,7 +763,8 @@ public class JobInProgress {
     if (conf.getBoolean("mapred.map2.enabledMap2", false)) {
       LOG.info("map2 enabled on this job");
       map2Info.readMetaInfo(jobId, fs, conf, jobSubmitDir);
-      map2TaskPacker.init(map2Info.getSegmentList());
+      map2TaskPacker.init(map2Info.getSegmentList(),
+                          map2Info.getCoverMap());
     }
     //end xyu40@gatech.edu
 
@@ -2329,7 +2330,6 @@ public class JobInProgress {
     //Added by xyu40@gatech.edu
     //use map2 packing 
     try {
-      LOG.info("Trying map2 packs");
       tip = findMapTaskFromPack(tts, clusterSize);
       if (tip != null) {
         LOG.info("Choosing a pack task " + tip.getTIPId());

@@ -64,10 +64,13 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   private Cache cache;
   private CacheFileFreeStore freeStore = new CacheFileFreeStore();
   private BlockCacheStatus prevStatus = new BlockCacheStatus();
+  private volatile long hits;
+  private volatile long misses;
 
   //service
   private Server rpcListener;
   private Thread freeStoreThread;
+  private Thread hitRateReporter;
 
   public BlockCacheServer(Configuration conf) throws IOException {
     this.conf = conf;
@@ -89,6 +92,28 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     freeStoreThread = new Thread(freeStore);
     freeStoreThread.setDaemon(true);
     freeStoreThread.start();
+
+    hitRateReporter = new Thread() {
+      long prevHits;
+      long prevMisses;
+
+      public void run() {
+        while(true) {
+          if ((prevHits != hits) || (prevMisses != misses)) {
+            LOG.info("Hits: " + hits + " Misses: " + misses);
+            prevHits = hits;
+            prevMisses = misses;
+          }
+          try {
+            Thread.sleep(10000);
+          }
+          catch (InterruptedException ie) {
+          }
+        }
+      }
+    };
+    hitRateReporter.setDaemon(true);
+    hitRateReporter.start();
 
     //server
     int port = conf.getInt(
@@ -166,8 +191,10 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     FileStatus status;
     FSDataInputStream in;
     List<BlockLocation> blocks;
+    long versionId;
 
-    PathInfo(FileSystem fs, Path path) throws IOException {
+    PathInfo(FileSystem fs, Path path, long versionId) throws IOException {
+      this.versionId = versionId;
       this.fs = fs;
       status = fs.getFileStatus(path);
       in = fs.open(path);
@@ -258,7 +285,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     }
 
     //pathinfo key
-    void put(URI fsUri, Path path) throws IOException {
+    void put(URI fsUri, Path path, long versionId) throws IOException {
       FileSystem fs;
       synchronized(fsCache) {
         fs = fsCache.get(fsUri);
@@ -268,8 +295,9 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
         }
       }
       synchronized(pathCache) {
-        if (pathCache.get(path) == null) {
-          pathCache.put(path, new PathInfo(fs, path));
+        PathInfo info = pathCache.get(path);
+        if ((info == null) || (info.versionId != versionId)) {
+          pathCache.put(path, new PathInfo(fs, path, versionId));
         }
       }
     }
@@ -321,6 +349,14 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       }
     }
 
+    void renew(String user, Block b) {
+      synchronized(blockCache) {
+        CachedBlocks blocks = blockCache.get(user);
+        if (blocks == null) return;
+        blocks.renew(b);
+      }
+    }
+
     Segments getSegments(String user) {
       synchronized(blockCache) {
         CachedBlocks blocks = blockCache.get(user);
@@ -335,13 +371,13 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
      */
     class CachedBlocks {
 
-      private Map<Path, List<Block>> fileBlockLists; //file -> blocks
+      //private Map<Path, List<Block>> fileBlockLists; //file -> blocks
       private LinkedList<Block> blockQueue; //fifo queue for remove
       private long capacity = 0;
-      private long currSize = 0;
+      private volatile long currSize = 0;
 
       CachedBlocks(long capacity) {
-        fileBlockLists = new HashMap<Path, List<Block>>();
+        //fileBlockLists = new HashMap<Path, List<Block>>();
         blockQueue = new LinkedList<Block>();
         this.capacity = capacity;
       }
@@ -351,91 +387,159 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       //have that guarantee.
       synchronized boolean put(Path path, long startOffset, 
                                long length, boolean useReplica) {
-        if (currSize + length > capacity)
-          removeEldestBlocks(length);
+        if (!useReplica) {
+          if (currSize + length > capacity) {
+            LOG.info("Capacity exceeds." + 
+                     " currSize: " + currSize + 
+                     " length: " + length);
+            removeEldestBlocks(length);
+          }
+        }
+        for (Block b : blockQueue) {
+          if (b.getPath().equals(path)) {
+            long currStart = b.getOffset();
+            long currEnd = b.getLength();
+            long start = startOffset;
+            long end = startOffset + length;
+            if (currStart == start && currEnd == end) {
+              //already cached.
+              return false;
+            }
+          }
+        }
         Block key = new Block(path, startOffset, length, useReplica, "");
-        List<Block> blocks = fileBlockLists.get(path);
-        if (blocks == null) {
-          blocks = new LinkedList<Block>();
-          fileBlockLists.put(path, blocks);
-        }
-        //use the natural comparetor
-        int targetIndex = Collections.binarySearch(blocks, key);
-        if (targetIndex >= 0) {
-          //already there no need to cache
-          return false;
-        }
-        targetIndex = -(targetIndex + 1);
-        blocks.add(targetIndex, key);
         blockQueue.addLast(key);
-        currSize += length;
+        if (!useReplica)
+          currSize += length;
         return true;
       }
+//      synchronized boolean put(Path path, long startOffset, 
+//                               long length, boolean useReplica) {
+//        if (!useReplica) {
+//          if (currSize + length > capacity) {
+//            LOG.info("Capacity exceeds." + 
+//                     " currSize: " + currSize + 
+//                     " length: " + length);
+//            removeEldestBlocks(length);
+//          }
+//        }
+//        Block key = new Block(path, startOffset, length, useReplica, "");
+//        List<Block> blocks = fileBlockLists.get(path);
+//        if (blocks == null) {
+//          blocks = new LinkedList<Block>();
+//          fileBlockLists.put(path, blocks);
+//        }
+//        //use the natural comparetor
+//        int targetIndex = Collections.binarySearch(blocks, key);
+//        if (targetIndex >= 0) {
+//          //already there no need to cache
+//          return false;
+//        }
+//        targetIndex = -(targetIndex + 1);
+//        blocks.add(targetIndex, key);
+//        blockQueue.addLast(key);
+//        if (!useReplica)
+//          currSize += length;
+//        return true;
+//      }
 
       //assuming we have the object lock
       private void removeEldestBlocks(long length) {
         long sizeToRemove = currSize + length - capacity;
         if (length > capacity)
           LOG.error("try to cache a block larger than capacity");
-        while ((sizeToRemove > 0) && (!blockQueue.isEmpty())) {
-          Block toRemove = blockQueue.pollFirst();
-          Path path = toRemove.getPath();
-          if (!removeFromBlockLists(path, toRemove)) {
-            LOG.error("inconsistency in CachedBlocks");
+        for (int i = 0; i < blockQueue.size(); ++i) {
+          Block toRemove = blockQueue.get(i);
+          if (toRemove.shouldUseReplica()) {
+            //it is not really cached, skip
+            continue;
           }
+          toRemove = blockQueue.get(i);
+          Path path = toRemove.getPath();
+        //  if (!removeFromBlockLists(path, toRemove)) {
+        //    LOG.error("inconsistency in CachedBlocks");
+        //  }
           freeStore.add(toRemove);
+          blockQueue.remove(toRemove);
           sizeToRemove -= toRemove.getLength();
           currSize -= toRemove.getLength();
+          if (sizeToRemove < 0) {
+            break;
+          }
         }
+        LOG.info("currSize after removeEldst: " + currSize);
       }
 
       public void remove(Block b) {
         if (b == null) return;
         blockQueue.remove(b);
         Path path = b.getPath();
-        if (!removeFromBlockLists(path, b)) {
-          LOG.error("inconsistency in CachedBlocks");
-        }
+//        if (!removeFromBlockLists(path, b)) {
+//          LOG.error("inconsistency in CachedBlocks");
+//        }
         freeStore.add(b);
         currSize -= b.getLength();
+      }
+
+      public void renew(Block b) {
+        if (b == null) return;
+        blockQueue.remove(b);
+        blockQueue.addLast(b);
       }
 
       /**
        * Return false if block not in fileBlockLists
        */
-      boolean removeFromBlockLists(Path path, Block key) {
-        List<Block> blocks = fileBlockLists.get(path);
-        if (blocks == null) 
-          return false;
-        int targetIndex = Collections.binarySearch(blocks, key);
-        if (targetIndex < 0) 
-          return false;
-        blocks.remove(targetIndex);
-        return true;
-      }
+//      boolean removeFromBlockLists(Path path, Block key) {
+//        List<Block> blocks = fileBlockLists.get(path);
+//        if (blocks == null) 
+//          return false;
+//        int targetIndex = Collections.binarySearch(blocks, key);
+//        if (targetIndex < 0) 
+//          return false;
+//        blocks.remove(targetIndex);
+//        return true;
+//      }
+
+//      synchronized Block get(Path path, long pos) {
+//        Block key = new Block(path, pos, 1, false, "");
+//        List<Block> blocks = fileBlockLists.get(path);
+//        if (blocks == null) {
+//          blocks = new LinkedList<Block>();
+//          fileBlockLists.put(path, blocks);
+//          return null;
+//        }
+//        int targetIndex = Collections.binarySearch(blocks, key);
+//        //targetIndex is less than zero for sure.
+//        // empty list return null
+//        if (targetIndex == -1) 
+//          if (blocks.size() == 0)
+//            return null;
+//        // search for the block
+//        targetIndex = -(targetIndex + 1);
+//        if (targetIndex == blocks.size()) targetIndex = blocks.size() - 1;
+//        Block cached = blocks.get(targetIndex);
+//        long start = cached.getOffset();
+//        long end = start + cached.getLength();
+//        if (start <= pos && pos < end) return cached;
+//        else return null;
+//      }
 
       synchronized Block get(Path path, long pos) {
-        Block key = new Block(path, pos, 1, false, "");
-        List<Block> blocks = fileBlockLists.get(path);
-        if (blocks == null) {
-          blocks = new LinkedList<Block>();
-          fileBlockLists.put(path, blocks);
-          return null;
+//        Block key = new Block(path, pos, 1, false, "");
+//        List<Block> blocks = fileBlockLists.get(path);
+//        if (blocks == null) {
+//          blocks = new LinkedList<Block>();
+//          fileBlockLists.put(path, blocks);
+//          return null;
+//        }
+        for (Block cached : blockQueue) {
+          long start = cached.getOffset();
+          long end = start + cached.getLength();
+          if (cached.getPath().equals(path) &&
+              (start <= pos && pos < end)) return cached;
         }
-        int targetIndex = Collections.binarySearch(blocks, key);
-        //targetIndex is less than zero for sure.
-        // empty list return null
-        if (targetIndex == -1) 
-          if (blocks.size() == 0)
-            return null;
-        // search for the block
-        targetIndex = -(targetIndex + 1);
-        if (targetIndex == blocks.size()) targetIndex = blocks.size() - 1;
-        Block cached = blocks.get(targetIndex);
-        long start = cached.getOffset();
-        long end = start + cached.getLength();
-        if (start <= pos && pos < end) return cached;
-        else return null;
+        return null;
       }
 
       synchronized Segments getCachedSegments() {
@@ -540,7 +644,10 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     //already cached
     if (block != null) {
       if (block.getVersion() == versionId) {
-        LOG.debug("Block already exists with version: " + versionId);
+        LOG.debug("Hits. Block already exists with version: " + versionId + 
+                  " useReplica: " + block.shouldUseReplica());
+        hits ++;
+        cache.renew(user, block);
         return waitOrConstructBlock(false, block, null, user, versionId);
       }
       else {
@@ -557,8 +664,8 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     }
     //not cached, try to cache it
     PathInfo info = cache.get(path);
-    if (info == null) {
-      cache.put(fsUri, path);
+    if (info == null || info.versionId != versionId) {
+      cache.put(fsUri, path, versionId);
       info = cache.get(path);
     }
     FileStatus file = info.status;
@@ -584,13 +691,20 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
               " path: " + path + 
               " off: " + off + 
               " len: " + len + 
-              " isLocal: " + isLocal);
+              " isLocal: " + isLocal + 
+              " first: " + first);
     block = cache.get(user, path, off);
     block.setVersion(versionId);
-    if (isLocal) return block;
+    if (isLocal) {
+      LOG.debug("Hits. Block local.");
+      hits ++;
+      return block;
+    }
     //caching remote block
     block = waitOrConstructBlock(first, block, info, user, versionId);
     block.setVersion(versionId);
+    LOG.debug("Misses. Constructing block or wait for construction.");
+    misses ++;
     return block;
   }
 
@@ -606,6 +720,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     long off = block.getOffset();
     long len = block.getLength();
     if (first) {
+      long start, end = 0;
       synchronized(block) {
         String localPath = createLocalPath(user, block, versionId);
         FileOutputStream out;
@@ -620,19 +735,39 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
         byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
         long bytesRead = 0;
         int n = 0;
-        info.in.seek(off);
-        while(bytesRead < len) {
-          n = info.in.read(buffer);
-          out.write(buffer, 0, n);
-          bytesRead += n;
+        start = System.currentTimeMillis();
+        //ToDo: optimize this synchronization
+        synchronized(info.in) {
+          info.in.seek(off);
+          while(bytesRead < len) {
+            n = info.in.read(buffer);
+            if (n == -1) {
+              out.close();
+              throw new IOException("Unexpected EOF at block" + 
+                                    " path: " + block.getPath() + 
+                                    " off: " + block.getOffset() + 
+                                    " len: " + block.getLength() +
+                                    " bytesRead: " + bytesRead + 
+                                    " info.location: " + 
+                                    info.getLocation(off).getHosts()[0] + 
+                                    " info.off: " + 
+                                    info.getLocation(off).getOffset() + 
+                                    " info.len: " + 
+                                    info.getLocation(off).getLength());
+            }
+            out.write(buffer, 0, n);
+            bytesRead += n;
+          }
         }
         out.close();
 
         block.setLocalPath(localPath);
         block.notifyAll();
+        end = System.currentTimeMillis();
       }
       LOG.info("Block constructed at" + 
-                " local path: " + block.getLocalPath());
+                " local path: " + block.getLocalPath() +
+                " in: " + (end - start) + " ms");
       return block;
     }
     else {
@@ -653,6 +788,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
               "/CONSTRUCTION_FAILED")) {
         LOG.warn("Failed Waked up from waiting on" + 
                  " block: " + block.toString());
+        cache.remove(user, block);
         throw new IOException("Cache remote read failed");
       }
       return block;

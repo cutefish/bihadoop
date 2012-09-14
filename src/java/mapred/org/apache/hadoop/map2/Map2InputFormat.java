@@ -45,6 +45,7 @@ public class Map2InputFormat
     List<InputSplit> splits;
     List<String> idxList = new ArrayList<String>();
     List<Segment[]> segmentList = new ArrayList<Segment[]>();
+    Map<Segment, Segment> coverSegMap = new HashMap<Segment, Segment>();
     Map<Segment, String[]> segLocMap = new HashMap<Segment, String[]>();
 
     List<FileStatus> files = listStatus(job);
@@ -61,6 +62,8 @@ public class Map2InputFormat
         idxList.add(path.toString());
         Segment seg = new Segment(path, 0, length);
         segmentList.add(new Segment[] { seg });
+        Segment coverSeg = getCoverSegments(seg, blkLocations);
+        coverSegMap.put(seg, coverSeg);
         String[] hosts = collectHosts(blkLocations, 0, length);
         segLocMap.put(seg, hosts);
       }
@@ -76,8 +79,14 @@ public class Map2InputFormat
           for (Segment seg : segs) {
             long off = seg.getOffset();
             long len = seg.getLength();
-            String[] hosts = collectHosts(blkLocations, off, len);
-            segLocMap.put(seg, hosts);
+            if (coverSegMap.get(seg) == null) {
+              Segment coverSeg = getCoverSegments(seg, blkLocations);
+              coverSegMap.put(seg, coverSeg);
+            }
+            if (segLocMap.get(seg) == null) {
+              String[] hosts = collectHosts(blkLocations, off, len);
+              segLocMap.put(seg, hosts);
+            }
           }
         }
       }
@@ -88,10 +97,60 @@ public class Map2InputFormat
     //To do: this filtering interface is where the restriction of two input is
     //enforced. Maybe use a parser in the future
 
-    splits = filterAndCombine(job, idxList, segmentList, segLocMap);
-
-    LOG.info("Created splits");
+    splits = filterAndCombine(job, idxList, segmentList, 
+                              coverSegMap, segLocMap);
+    //StringBuilder sb = new StringBuilder();
+    //sb.append("Created splits:\n");
+    //for (InputSplit split : splits) {
+    //  sb.append(split);
+    //  sb.append(",\n");
+    //}
+    //sb.append("\n");
+    //LOG.info(sb.toString());
+    //
+    //sb.append("Loc map:\n");
+    //for (Segment seg: segLocMap.keySet()) {
+    //  sb.append(seg + ":\n");
+    //  String[] hosts = segLocMap.get(seg);
+    //  for (int i = 0; i < hosts.length; ++i) {
+    //    sb.append("\t" + hosts[i] + "\n");
+    //  }
+    //}
+    //LOG.info(sb.toString());
+    //System.exit(-1);
     return splits;
+  }
+
+  private Segment getCoverSegments(Segment seg, BlockLocation[] blkLocations) 
+      throws IOException {
+    List<BlockLocation> blocks = Arrays.asList(blkLocations);
+    List<String> hosts = new ArrayList<String>();
+    long start = seg.getOffset();
+    long end = start + seg.getLength();
+    int idx = 0;
+
+    long coverStart = -1;
+    long coverEnd = -1;
+
+    while(idx < blocks.size()) {
+      BlockLocation curr = blocks.get(idx);
+      long currStart = curr.getOffset();
+      long currEnd = currStart + curr.getLength();
+
+      if (currStart <= start && start <= currEnd) {
+        coverStart = currStart;
+      }
+
+      if (currStart <= end && end <= currEnd) {
+        coverEnd = currEnd;
+      }
+
+      if (coverStart != -1 && coverEnd != -1) {
+        break;
+      }
+      idx ++;
+    }
+    return new Segment(seg.getPath(), coverStart, coverEnd - coverStart);
   }
 
   private String[] collectHosts(BlockLocation[] blkLocations,
@@ -99,49 +158,25 @@ public class Map2InputFormat
     List<BlockLocation> blocks = Arrays.asList(blkLocations);
     List<String> hosts = new ArrayList<String>();
     long start = off;
-    long end = start + off;
-    int startIdx = findBlock(blocks, off);
-    int idx = (startIdx >= 0) ? startIdx : -(startIdx + 1);
+    long end = start + len;
+    int idx = 0;
     while(idx < blocks.size()) {
       BlockLocation curr = blocks.get(idx);
       long currStart = curr.getOffset();
       long currEnd = currStart + curr.getLength();
-      if ((start <= currStart && currEnd <= end) ||
-          (currStart <= start && end <= currEnd)) {
+      if ((currStart <= start && start < currEnd) ||
+          (currStart <= end && end < currEnd)) {
         hosts.addAll(Arrays.asList(blkLocations[idx].getHosts()));
-      }
-      else {
-        break;
       }
       idx ++;
     }
     return hosts.toArray(new String[hosts.size()]);
   }
 
-  private int findBlock(List<BlockLocation> list, long off) {
-    BlockLocation key = new BlockLocation(null, null, off, 1);
-    Comparator<BlockLocation> comp = 
-        new Comparator<BlockLocation>() {
-          //Returns 0 iff a is inside b or b is inside a
-          public int compare(BlockLocation a, BlockLocation b) {
-            long aBeg = a.getOffset();
-            long bBeg = b.getOffset();
-            long aEnd = aBeg + a.getLength();
-            long bEnd = bBeg + b.getLength();
-            if ((aBeg <= bBeg && bEnd <= aEnd) ||
-                (bBeg <= aBeg && aEnd <= bEnd))
-              return 0;
-            if (aBeg < bBeg)
-              return -1;
-            return 1;
-          }
-        };
-    return Collections.binarySearch(list, key, comp);
-  }
-
   protected List<InputSplit> filterAndCombine(
       JobContext job, 
       List<String> idxList, List<Segment[]> segmentList, 
+      Map<Segment, Segment> coverSegMap,
       Map<Segment, String[]> segLocMap) {
     List<InputSplit> splits = new ArrayList<InputSplit>();
     Map2Filter filter = getIndexFilter(job);
@@ -157,11 +192,15 @@ public class Map2InputFormat
           for (int k = 0; k < segmentList.get(j).length; ++k) {
             indices[k + segmentList.get(i).length] = idxList.get(j);
           }
+          Segment[] coverSegs = new Segment[segs.length];
+          for (int k = 0; k < segs.length; ++k) {
+            coverSegs[k] = coverSegMap.get(segs[k]);
+          }
           String[][] hosts = new String[segs.length][];
           for (int k = 0; k < segs.length; ++k) {
               hosts[k] = segLocMap.get(segs[k]);
           }
-          Map2Split split = new Map2Split(segs, indices, hosts);
+          Map2Split split = new Map2Split(segs, indices, coverSegs, hosts);
           splits.add(split);
         }
       }

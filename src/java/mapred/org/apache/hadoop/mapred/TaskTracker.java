@@ -1887,9 +1887,10 @@ public class TaskTracker implements MRConstants, TaskUmbilicalProtocol,
             aclsManager.getMROwner().getUserName());
         status.setBlockCacheStatus(bcs);
       }
-      catch (IOException ioe) {
-        LOG.error("Block server status error: " + 
-                  StringUtils.stringifyException(ioe));
+      catch (Exception e) {
+        LOG.error("====>Block server status error: " + 
+                  StringUtils.stringifyException(e));
+        status.setBlockCacheStatus(new BlockCacheStatus());
       }
     }
     //end xyu40@gatech.edu

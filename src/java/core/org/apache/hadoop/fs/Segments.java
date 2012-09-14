@@ -113,10 +113,7 @@ public class Segments implements Writable {
     if (thisList.size() == 0) return new CoverInfo(key.getLength(), key);
     if (hintStart < 0) hintStart = 0;
     if (hintEnd > thisList.size()) hintEnd = thisList.size();
-    int idx = Collections.binarySearch(
-        thisList.subList(hintStart, hintEnd), key);
-    idx = (idx >= 0) ? idx : -(idx + 1);
-    if (idx > 0) idx --;
+    int idx = hintStart;
     long targetStart = key.getOffset();
     long targetEnd = targetStart + key.getLength();
     Segment curr;
@@ -125,12 +122,15 @@ public class Segments implements Writable {
     //(1)curr.start > curr.end > targetStart > targetEnd
     //(2)curr.start > targetStart > curr.end > targetEnd
     //(3)curr.start > targetStart > targetEnd > curr.end
-    //(4)targetStart > curr..start > curr.end > targetEnd
+    //(4)targetStart > curr.start > curr.end > targetEnd
     //(5)targetStart > curr.start > targetEnd > curr.end
     //(6)targetStart > targetEnd > curr.start > curr.end 
-    while(true) {
-      if (idx >= thisList.size()) break;
+    while(idx < hintEnd) {
       curr = thisList.get(idx);
+      if (!curr.getPath().equals(key.getPath())) {
+        idx ++;
+        continue;
+      }
       long currStart = curr.getOffset();
       long currEnd = currStart + curr.getLength();
       //case (6) calculation ends

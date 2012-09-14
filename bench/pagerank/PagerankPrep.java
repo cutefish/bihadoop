@@ -60,7 +60,6 @@ public class PagerankPrep extends Configured implements Tool {
 
       //key = srcId, value = dstId
       context.write(new Text(line[0]), new Text(line[1]));
-      System.out.println(line[0] + ", " + line[1]);
     }
   }
 
@@ -97,10 +96,12 @@ public class PagerankPrep extends Configured implements Tool {
         extends Mapper<Object, Text, Text, Text> {
 
     int blockSize = 1;
+    int numNodes = 1;
     
     public void setup(Context context) 
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
+      numNodes = conf.getInt("pagerank.num.nodes", -1);
       blockSize = conf.getInt("pagerank.block.size", -1);
     }
 
@@ -121,8 +122,10 @@ public class PagerankPrep extends Configured implements Tool {
 
       int rowId = Integer.parseInt(line[0]);
       int colId = Integer.parseInt(line[1]);
-      int blockRowId = rowId / blockSize;
-      int blockColId = colId / blockSize;
+      int blockRowId = rowId %(numNodes / blockSize);
+      int blockColId = colId %(numNodes / blockSize);
+      //int blockRowId = rowId / blockSize;
+      //int blockColId = colId / blockSize;
 
       Text newKey = new Text("edge" + "\t" + blockRowId + "\t" + blockColId);
 
@@ -159,18 +162,23 @@ public class PagerankPrep extends Configured implements Tool {
                        final Context context)
         throws IOException, InterruptedException {
 
-      ArrayList<String> blockList = new ArrayList<String>();
-      for (Text val : values) {
-        blockList.add(val.toString());
-      }
+  //    ArrayList<String> blockList = new ArrayList<String>();
+  //    for (Text val : values) {
+  //      blockList.add(val.toString());
+  //    }
 
-      Collections.sort(blockList, mc);
+  //    Collections.sort(blockList, mc);
+
+  //    StringBuilder sb = new StringBuilder();
+  //    for (String val : blockList) {
+  //      sb.append(val + "\n");
+  //    }
+  //    blockList.clear();
 
       StringBuilder sb = new StringBuilder();
-      for (String val : blockList) {
+      for (Text val: values) {
         sb.append(val + "\n");
       }
-      blockList.clear();
 
       context.write(key, new Text(sb.toString()));
     }
@@ -201,12 +209,12 @@ public class PagerankPrep extends Configured implements Tool {
   }
 
   protected static int printUsage() {
-    System.out.println("PagerankPrep <inPath> <edgePath> <nodePath>");
+    System.out.println("PagerankPrep <edgePath> <blkedgePath>");
     return -1;
   }
 
   public int run(final String[] args) throws Exception {
-    if (args.length != 3) {
+    if (args.length != 2) {
       return printUsage();
     }
 
@@ -216,12 +224,10 @@ public class PagerankPrep extends Configured implements Tool {
 
     inPath = new Path(args[0]);
     edgePath = new Path(args[1]);
-    nodePath = new Path(args[2]);
     tmpPath = new Path(inPath.getParent(), "tmp");
 
     FileSystem fs = FileSystem.get(conf);
     fs.delete(edgePath, true);
-    fs.delete(nodePath, true);
     fs.delete(tmpPath, true);
 
     waitForJobFinish(configStage1());
@@ -229,12 +235,31 @@ public class PagerankPrep extends Configured implements Tool {
 
     fs.delete(tmpPath, true);
 
-    genInitNodeRanks();
-    
     return 1;
   }
 
+  public static void initNode(final Path arg) throws Exception {
+    Configuration conf = new Configuration();
+    conf.addResource("pagerank-conf.xml");
+    checkValidity(conf);
+
+    Path nodePath = arg;
+    FileSystem fs = FileSystem.get(conf);
+    fs.delete(nodePath, true);
+    genInitNodeRanks(conf, nodePath);
+  }
+
+    
   private void checkValidity() {
+    int blockSize = conf.getInt("pagerank.block.size", -1);
+    if (blockSize == -1) 
+      throw new IllegalArgumentException("block size not set");
+    int numNodes = conf.getInt("pagerank.num.nodes", -1);
+    if (numNodes == -1) 
+      throw new IllegalArgumentException("number of nodes not set");
+  }
+
+  private static void checkValidity(Configuration conf) {
     int blockSize = conf.getInt("pagerank.block.size", -1);
     if (blockSize == -1) 
       throw new IllegalArgumentException("block size not set");
@@ -256,7 +281,7 @@ public class PagerankPrep extends Configured implements Tool {
     job.setJarByClass(PagerankPrep.class);
     job.setMapperClass(MapStage1.class);
     job.setReducerClass(ReduceStage1.class);
-    job.setNumReduceTasks(conf.getInt("pagerank.num.reducer", 1));
+    job.setNumReduceTasks(conf.getInt("pagerank.num.reducers", 1));
     job.setOutputKeyClass(Text.class);
     job.setOutputValueClass(Text.class);
     FileInputFormat.setInputPaths(job, inPath);
@@ -269,7 +294,7 @@ public class PagerankPrep extends Configured implements Tool {
     job.setJarByClass(PagerankPrep.class);
     job.setMapperClass(MapStage2.class);
     job.setReducerClass(ReduceStage2.class);
-    job.setNumReduceTasks(conf.getInt("pagerank.num.reducer", 1));
+    job.setNumReduceTasks(conf.getInt("pagerank.num.reducers", 1));
     job.setOutputKeyClass(Text.class);
     job.setOutputValueClass(Text.class);
     job.setOutputFormatClass(MatBlockOutputFormat.class);
@@ -287,7 +312,8 @@ public class PagerankPrep extends Configured implements Tool {
     }
   }
 
-  private void genInitNodeRanks() throws Exception {
+  private static void genInitNodeRanks(Configuration conf,
+                                       Path outPath) throws Exception {
     int blockSize = conf.getInt("pagerank.block.size", 1);
     int numNodes = conf.getInt("pagerank.num.nodes", 1);
     Path[] localPath = {
@@ -301,12 +327,31 @@ public class PagerankPrep extends Configured implements Tool {
     int prevOff = 0;
     int currOff = 0;
     System.out.println("generating initial rank vector");
-    for (int i = 0; i < numNodes; i += blockSize) {
-      //in each block write a block and an index
-      int max = i + blockSize;
-      String blockId = "node" + "\t" + i / blockSize;
+   // for (int i = 0; i < numNodes; i += blockSize) {
+   //   //in each block write a block and an index
+   //   int max = i + blockSize;
+   //   String blockId = "node" + "\t" + i / blockSize;
+   //   StringBuilder sb = new StringBuilder();
+   //   for (int j = i; j < max; ++j) {
+   //     sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");
+   //   }
+   //   out.writeBytes(sb.toString());
+   //   currOff += sb.toString().length();
+   //   idxOut.write(IndexingConstants.IDX_START);
+   //   Text.writeString(idxOut, blockId);
+   //   idxOut.write(IndexingConstants.SEG_START);
+   //   idxOut.writeLong(prevOff);
+   //   idxOut.writeLong(currOff - prevOff);
+   //   idxOut.write(IndexingConstants.IDX_END);
+   //   prevOff = currOff;
+   //   System.out.print(".");
+   // }
+   // System.out.print("\n");
+
+    for (int i = 0; i < numNodes / blockSize; ++i) {
+      String blockId = "node" + "\t" + i;
       StringBuilder sb = new StringBuilder();
-      for (int j = i; j < max; ++j) {
+      for (int j = i; j < numNodes; j += numNodes / blockSize) {
         sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");
       }
       out.writeBytes(sb.toString());
@@ -324,7 +369,7 @@ public class PagerankPrep extends Configured implements Tool {
 
     //copy to hdfs
     FileSystem fs = FileSystem.get(conf);
-    fs.mkdirs(nodePath);
-    fs.copyFromLocalFile(false, true, localPath, nodePath);
+    fs.mkdirs(outPath);
+    fs.copyFromLocalFile(false, true, localPath, outPath);
   }
 }

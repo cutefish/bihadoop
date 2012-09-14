@@ -41,6 +41,7 @@ public class MapTaskPacker {
   private int maxPackSize = 0;
   private List<List<Segment>> groups;
   private Map<Segment, TreeSet<Segment>> joinTable;
+  private Map<Segment, Segment> coverMap;
 
   public MapTaskPacker(Configuration conf) {
     this.conf = conf;
@@ -151,7 +152,10 @@ public class MapTaskPacker {
    * Segments in each split are not ordered, that is, we do not distinguish 
    * segment[0] and segment[1]
    */
-  public void init(List<Segment[]> segList) {
+  public void init(List<Segment[]> segList,
+                   Map<Segment, Segment> coverMap) {
+
+    this.coverMap = coverMap;
 
     long start = System.currentTimeMillis();
 
@@ -162,7 +166,6 @@ public class MapTaskPacker {
 
     long end = System.currentTimeMillis();
 
-    //LOG.debug(joinTableToString());
     //LOG.debug(groupsToString());
 
     LOG.info("Number of Groups size: " + groups.size());
@@ -333,10 +336,10 @@ public class MapTaskPacker {
 
     long start = System.currentTimeMillis();
 
-    LOG.debug("Generating a last level pack");
     //no pack if no group.
     if ((groups == null) || (groups.isEmpty())) return null;
 
+    LOG.debug("Generating a last level pack");
     //select from the group with least local leftSize
     //select from the largest join set.
     Segments cache = new Segments(staticCache);
@@ -361,8 +364,18 @@ public class MapTaskPacker {
     for(Segment seg : largestSet) {
       chosenJoinSet.add(seg);
       CoverInfo info = staticCache.cover(seg);
-      sizeLeft -= info.leftSize;
-      chosenSegments.add(seg);
+      if (info.leftSize == 0) { 
+        continue;
+      }
+      //if staticCache does not cover that segment totally
+      //we need to cache a whole cover segment
+      Segment coverSeg = coverMap.get(seg);
+      if (coverSeg == null) {
+        LOG.error("Lack cover seg info for: " + seg);
+        continue;
+      }
+      sizeLeft -= coverSeg.getLength();
+      chosenSegments.add(coverSeg);
       if (sizeLeft < 0) break;
     }
     if (chosenJoinSet.isEmpty()) return null;
@@ -374,14 +387,26 @@ public class MapTaskPacker {
     LOG.debug("Start packing");
     //since the cover info in bestGroup is already ordered according to the
     //locality, we can simply pop them out.
+    LOG.debug("staticCache: " + staticCache);
+    LOG.debug("dynamicCache: " + dynamicCache);
+
     for (CoverInfo info : bestGroup) {
-      //we need to know the if static cache can cover this segment
+      LOG.debug("cover info:" + info);
+      //we need to know if static cache can cover this segment
       CoverInfo staticInfo = staticCache.cover(info.segment);
+      LOG.debug("static cover info:" + info);
+      Segment coverSeg = coverMap.get(info.segment);
+      //if it is not in the static and not in the dynamic and size too large
+      //skip.
+      if (staticInfo.leftSize != 0) {
+        if (!chosenSegments.contains(coverSeg))
+          if (sizeLeft - coverSeg.getLength() < 0)
+            continue;
+      }
 
-      if (!chosenSegments.contains(info.segment))
-        if (sizeLeft - staticInfo.leftSize < 0)
-          continue;
+      LOG.debug("size left: " + sizeLeft);
 
+      //here we can add join set segments.
       Set<Segment> join = joinTable.get(info.segment);
       if (join == null) continue;
 
@@ -405,9 +430,9 @@ public class MapTaskPacker {
 
       if (count != 0) {
         //at least one join segment is chosen
-        if (!chosenSegments.contains(info.segment)) {
-          chosenSegments.add(info.segment);
-          sizeLeft -= staticInfo.leftSize;
+        if (!chosenSegments.contains(coverSeg)) {
+          chosenSegments.add(coverSeg);
+          sizeLeft -= coverSeg.getLength();
         }
       }
 
@@ -492,9 +517,10 @@ public class MapTaskPacker {
   public Pack obtainSubpack(Pack pack, long cacheSize) {
     long start = System.currentTimeMillis();
 
-    LOG.debug("Generating a sub pack\n");
 
     if ((pack == null) || (pack.isEmpty())) return null;
+
+    LOG.debug("Generating a sub pack\n");
 
     Pack subPack = new Pack();
 
