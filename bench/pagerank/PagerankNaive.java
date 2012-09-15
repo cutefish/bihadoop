@@ -21,9 +21,11 @@ Version: 2.0
 
 package bench.pagerank;
 
+import java.io.BufferedWriter;
 import java.io.DataOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.util.ArrayList;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
@@ -66,8 +68,7 @@ public class PagerankNaive extends Configured implements Tool {
 				return;
 
 			final String[] line = lineText.split("\t");
-			if(line.length < 2 )
-				return;
+			if(line.length < 2 ) return;
 
       //dealing with vectors
       //rowId + "\t" + pageRank + "\t" + "vec"
@@ -78,13 +79,13 @@ public class PagerankNaive extends Configured implements Tool {
       }
 
       if (line.length != 2) return;
-
       //dealing with adjacency matrix
       //srcId + "\t" + dstId
       //dstProb = srcDstXferProb * srcProb
       //so we should group srcId together
       int srcId = Integer.parseInt(line[0]);
-      context.write(new IntWritable(srcId), new Text(line[1]));
+      int dstId = Integer.parseInt(line[1]);
+      context.write(new IntWritable(srcId), new Text(Integer.toString(dstId)));
 		}
 	}
 
@@ -312,12 +313,15 @@ public class PagerankNaive extends Configured implements Tool {
     String localPath = "/tmp/initialNodeRank";
     FileOutputStream file = new FileOutputStream(localPath);
     DataOutputStream out = new DataOutputStream(file);
+    BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out));
     System.out.println("generating initial rank vector");
     for (int i = 0; i < numNodes; ++i) {
       String line = "" + i + "\t" + 1 / (float)numNodes + "\t" + "vec\n";
-      out.writeBytes(line);
+      writer.write(line);
       if (i % numNodes/100 == 0) System.out.print(".");
     }
+    writer.flush();
+    out.close();
     System.out.print("\n");
     //copy to hdfs
     FileSystem fs = FileSystem.get(conf);

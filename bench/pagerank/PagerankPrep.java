@@ -1,8 +1,10 @@
 package bench.pagerank;
 
+import java.io.BufferedWriter;
 import java.io.FileOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -322,6 +324,7 @@ public class PagerankPrep extends Configured implements Tool {
     };
     FileOutputStream file = new FileOutputStream(localPath[0].toString());
     DataOutputStream out = new DataOutputStream(file);
+    BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out));
     FileOutputStream idxFile = new FileOutputStream(localPath[1].toString());
     DataOutputStream idxOut = new DataOutputStream(idxFile);
     int prevOff = 0;
@@ -354,7 +357,7 @@ public class PagerankPrep extends Configured implements Tool {
       for (int j = i; j < numNodes; j += numNodes / blockSize) {
         sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");
       }
-      out.writeBytes(sb.toString());
+      writer.write(sb.toString());
       currOff += sb.toString().length();
       idxOut.write(IndexingConstants.IDX_START);
       Text.writeString(idxOut, blockId);
@@ -366,6 +369,9 @@ public class PagerankPrep extends Configured implements Tool {
       System.out.print(".");
     }
     System.out.print("\n");
+    writer.flush();
+    out.close();
+    idxOut.close();
 
     //copy to hdfs
     FileSystem fs = FileSystem.get(conf);
