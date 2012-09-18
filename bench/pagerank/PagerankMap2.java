@@ -1,13 +1,16 @@
 package bench.pagerank;
 
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
+import java.io.BufferedInputStream;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.InputStreamReader;
 import java.io.IOException;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -21,9 +24,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.DoubleWritable;
-import org.apache.hadoop.io.LongWritable;
-import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapreduce.Counters;
@@ -63,7 +64,7 @@ public class PagerankMap2 extends Configured implements Tool {
 
   public static class MapStage1
         extends Mapper<String[], TrackedSegments,
-                        Text, Text> {
+                        Text, BytesWritable> {
     FileSystem fs;
     int blockSize;
     int numNodes;
@@ -117,6 +118,9 @@ public class PagerankMap2 extends Configured implements Tool {
       Segment edgeSgmt = segments[edgeIdx];
       Segment nodeSgmt = segments[nodeIdx];
 
+      int edgeBlockRowId = Integer.parseInt(indices[edgeIdx].split("\t")[1]);
+      int nodeBlockRowId = Integer.parseInt(indices[nodeIdx].split("\t")[1]);
+
       FSDataInputStream in;
       BufferedReader reader;
 
@@ -128,8 +132,13 @@ public class PagerankMap2 extends Configured implements Tool {
       context.setStatus("reading node vector: " + indices[nodeIdx] + 
                         " nodeSgmt: " + nodeSgmt);
 
-      //HashMap<Integer, Double> prevRank = new HashMap<Integer, Double>();
+      /**
+       * We store the previous rank in a array then combine them into a byte
+       * array.
+       */
       int arraySize = (int) (blockSize * 1.5);
+      int[] rowIdArray = new int[arraySize];
+      Arrays.fill(rowIdArray, -1);
       double[] prevRank = new double[arraySize];
       start = System.currentTimeMillis();
       if (useCache) {
@@ -141,6 +150,7 @@ public class PagerankMap2 extends Configured implements Tool {
       in.seek(nodeSgmt.getOffset());
       reader = new BufferedReader(new InputStreamReader(in));
       int bytesRead = 0;
+      int count = 0;
       while(bytesRead < nodeSgmt.getLength()) {
         String lineText = reader.readLine();
         if (lineText == null) break;
@@ -157,14 +167,29 @@ public class PagerankMap2 extends Configured implements Tool {
           double rank = Double.parseDouble(line[1]);
           //prevRank.put(rowId, rank);
           prevRank[rowIdInBlock] = rank;
-          //int blockRowId = rowId / blockSize;
-          int blockRowId = rowId % (numNodes / blockSize);
-          context.write(new Text("" + blockRowId),
-                        new Text("" + rowId + "\t" + rank + "\tprev"));
+          rowIdArray[rowIdInBlock] = rowId;
+          count ++;
         }
         catch(Exception e) {
           System.out.println("" + e + ", on line: " + lineText);
         }
+      }
+      //we add a header ahead of buffer to distinguish between previous and
+      //current value
+      ByteBuffer bbuf;
+      if (edgeBlockRowId == 0) {
+        bbuf = ByteBuffer.allocate(count * 12 + 4 * 4);
+        bbuf.put((byte)0x55);
+        bbuf.put((byte)0x00);
+        bbuf.put((byte)0x55);
+        bbuf.put((byte)0x00);
+        for (int i = 0; i < arraySize; ++i) {
+          if (rowIdArray[i] != -1) {
+            bbuf.putInt(rowIdArray[i]);
+            bbuf.putDouble(prevRank[i]);
+          }
+        }
+        context.write(new Text("" + nodeBlockRowId), new BytesWritable(bbuf.array()));
       }
       in.close();
       end = System.currentTimeMillis();
@@ -181,43 +206,55 @@ public class PagerankMap2 extends Configured implements Tool {
         in = fs.open(edgeSgmt.getPath());
       }
       in.seek(edgeSgmt.getOffset());
-      reader = new BufferedReader(new InputStreamReader(in));
+
+      DataInputStream dataIn = new DataInputStream(
+          new BufferedInputStream(in));
+
+      Arrays.fill(rowIdArray, -1);
+      double[] rankArray = new double[arraySize];
+
       bytesRead = 0;
       while (bytesRead < edgeSgmt.getLength()) {
-        String lineText = reader.readLine();
-        if (lineText == null) break;
-        bytesRead += lineText.length() + 1;
-        trSegs.progress = (float) (in.getPos() - edgeSgmt.getOffset()) / 
-            (float) edgeSgmt.getLength();
-
-        //ignore comment and blank
-        if (lineText.startsWith("#")) continue;
-        if (lineText.equals("")) continue;
-
-        String[] line = lineText.split("\t");
-        //ignore ill-formed lines
         int rowId, colId, colIdInBlock;
         double xferProb, partialRank;
         try {
-          rowId = Integer.parseInt(line[0]);
-          colId = Integer.parseInt(line[1]);
-          xferProb = Double.parseDouble(line[2]);
-          //Double rank = prevRank.get(colId);
-          //if (rank == null) {
-          //  continue;
-          //}
+          rowId = dataIn.readInt();
+          colId = dataIn.readInt();
+          xferProb = dataIn.readDouble();
+          bytesRead += 4 + 4 + 8;
           colIdInBlock = colId / (numNodes / blockSize);
           double rank = prevRank[colIdInBlock];
           partialRank = xferProb * rank;
-          //int blockRowId = rowId / blockSize;
-          int blockRowId = rowId % (numNodes / blockSize);
-          context.write(new Text("" + blockRowId),
-                        new Text("" + rowId + "\t" + partialRank));
+
+          int rowIdInBlock = rowId / (numNodes / blockSize);
+          rowIdArray[rowIdInBlock] = rowId;
+          rankArray[rowIdInBlock] += partialRank;
         }
         catch (Exception e) {
-          System.out.println("" + e + ", on line: " + lineText);
+          System.out.println("" + e + ", on bytesRead: " + bytesRead);
         }
       }
+
+      count = 0;
+      for (int i = 0; i < rowIdArray.length; ++i) {
+        if (rowIdArray[i] != -1)
+          count ++;
+      }
+
+      bbuf = ByteBuffer.allocate(count * 12 + 4 * 4);
+      bbuf.put((byte)0xff);
+      bbuf.put((byte)0x00);
+      bbuf.put((byte)0xff);
+      bbuf.put((byte)0x00);
+      for (int i = 0; i < arraySize; ++i) {
+        if (rowIdArray[i] != -1) {
+          bbuf.putInt(rowIdArray[i]);
+          bbuf.putDouble(rankArray[i]);
+        }
+      }
+
+      context.write(new Text("" + edgeBlockRowId),
+                    new BytesWritable(bbuf.array()));
       in.close();
       end = System.currentTimeMillis();
       System.out.println("Processed edge in " + (end - start) + " ms");
@@ -237,7 +274,7 @@ public class PagerankMap2 extends Configured implements Tool {
    * value: rowId + "\t" + rank; ...
    */
   public static class RedStage1
-          extends Reducer<Text, Text, Text, Text> {
+          extends Reducer<Text, BytesWritable, Text, Text> {
 
     float alpha = 0;
     int numNodes = 0;
@@ -256,53 +293,76 @@ public class PagerankMap2 extends Configured implements Tool {
     }
 
     public void reduce(final Text key,
-                       final Iterable<Text> values,
+                       final Iterable<BytesWritable> values,
                        final Context context) 
         throws IOException, InterruptedException {
-      //HashMap<Integer, Double> prevRank = new HashMap<Integer, Double>();
-      //HashMap<Integer, Double> currRank = new HashMap<Integer, Double>();
+
       int arraySize = (int) (blockSize * 1.5);
       double[] prevRank = new double[arraySize];
       double[] currRank = new double[arraySize];
       int[] rowIdArray = new int[arraySize];
-      for (Text val : values) {
-        String[] record = val.toString().split("\t");
-        //if its a prev rank record
-        int rowId = Integer.parseInt(record[0]);
-        int rowIdInBlock = rowId / (numNodes / blockSize);
-        double recordRank = Double.parseDouble(record[1]);
-        rowIdArray[rowIdInBlock] = rowId;
-        if (record.length == 3) {
-          //prevRank.put(rowId, recordRank);
-          prevRank[rowIdInBlock] = recordRank;
+      int max = 0;
+
+      for (BytesWritable val : values) {
+        ByteBuffer bbuf = ByteBuffer.wrap(val.getBytes());
+        int length = val.getLength();
+        byte[] header = new byte[4];
+        header[0] = bbuf.get();
+        header[1] = bbuf.get();
+        header[2] = bbuf.get();
+        header[3] = bbuf.get();
+        if ((header[0] == (byte) 0x55) &&
+            (header[1] == (byte) 0x00) &&
+            (header[2] == (byte) 0x55) &&
+            (header[3] == (byte) 0x00)) {
+          //previous rank
+          int size = length / 12;
+          for (int i = 0; i < size; ++i) {
+            int rowId = bbuf.getInt();
+            double rank = bbuf.getDouble();
+            int rowIdInBlock = rowId / (numNodes / blockSize);
+            if (rowIdInBlock >= arraySize) {
+              System.out.println("prev: rowId: " + rowId + " i: " + i);
+            }
+            rowIdArray[rowIdInBlock] = rowId;
+            prevRank[rowIdInBlock] = rank;
+            if (rowIdInBlock >= max) max = rowIdInBlock;
+          }
+        }
+        else if ((header[0] == (byte) 0xff) &&
+                 (header[1] == (byte) 0x00) &&
+                 (header[2] == (byte) 0xff) &&
+                 (header[3] == (byte) 0x00)) {
+          int size = length / 12;
+          for (int i = 0; i < size; ++i) {
+            int rowId = bbuf.getInt();
+            double rank = bbuf.getDouble();
+            int rowIdInBlock = rowId / (numNodes / blockSize);
+            if (rowIdInBlock >= arraySize) {
+              System.out.println("curr: rowId: " + rowId + " i: " + i);
+            }
+            rowIdArray[rowIdInBlock] = rowId;
+            currRank[rowIdInBlock] += rank;
+            if (rowIdInBlock >= max) max = rowIdInBlock;
+          }
         }
         else {
-          //Double rank = currRank.get(rowId);
-          //if (rank == null) {
-          //  currRank.put(rowId, recordRank);
-          //}
-          //else {
-          //  currRank.put(rowId, recordRank + rank);
-          //}
-          currRank[rowIdInBlock] += recordRank;
+          throw new IOException("Wrong byte header: " + val.getBytes().length + 
+                                " key: " + key.toString());
         }
       }
+
+      context.setStatus("Writing output");
+      System.out.println("Writing output");
 
       StringBuilder sb = new StringBuilder();
       int total = currRank.length;
       int mileStore = total / 100;
       int count = 0;
-      //for (Map.Entry<Integer, Double> entry : currRank.entrySet()) {
-      for (int i = 0; i < currRank.length; ++i) {
+      for (int i = 0; i <= max; ++i) {
         count ++;
-        //int rowId = entry.getKey();
-        //Double elemPrevRank = prevRank.get(rowId);
-        //if (elemPrevRank == null) {
-        //  throw new NullPointerException("PrevRank for id: " + rowId + 
-        //                                 " not found");
-        //}
-        //double xferProb = entry.getValue();
         double xferProb = currRank[i];
+        if (Math.abs(xferProb) < threshold) continue;
         double elemPrevRank = prevRank[i];
         //add the coefficients
         //alpha / |G| + (1 - alpha) * rank
@@ -477,6 +537,8 @@ public class PagerankMap2 extends Configured implements Tool {
     job.setMapperClass(MapStage1.class);
     job.setReducerClass(RedStage1.class);
     job.setNumReduceTasks(numReducers);
+    job.setMapOutputKeyClass(Text.class);
+    job.setMapOutputValueClass(BytesWritable.class);
     job.setOutputKeyClass(Text.class);
     job.setOutputValueClass(Text.class);
     job.setInputFormatClass(Map2InputFormat.class);
@@ -494,6 +556,8 @@ public class PagerankMap2 extends Configured implements Tool {
     job.setMapperClass(MapStage1.class);
     job.setReducerClass(RedStage1.class);
     job.setNumReduceTasks(numReducers);
+    job.setMapOutputKeyClass(Text.class);
+    job.setMapOutputValueClass(BytesWritable.class);
     job.setOutputKeyClass(Text.class);
     job.setOutputValueClass(Text.class);
     job.setInputFormatClass(Map2InputFormat.class);

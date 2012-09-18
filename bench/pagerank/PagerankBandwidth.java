@@ -2,7 +2,8 @@
 package bench.pagerank;
 
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
+import java.io.BufferedInputStream;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.InputStreamReader;
 import java.io.IOException;
@@ -140,19 +141,20 @@ public class PagerankBandwidth extends Configured implements Tool {
         in = fs.open(edgeSgmt.getPath());
       }
       in.seek(edgeSgmt.getOffset());
-      reader = new BufferedReader(new InputStreamReader(in));
-      bytesRead = 0;
-      while (bytesRead < edgeSgmt.getLength()) {
-        String lineText = reader.readLine();
-        if (lineText == null) break;
-        bytesRead += lineText.length() + 1;
-        //ignore comment and blank line
-        if (lineText.startsWith("#")) continue;
-        if (lineText.equals("")) continue;
 
-        String[] line = lineText.split("\t");
-        //context.write(new Text("" + 1),
-        //              new Text(lineText));
+      bytesRead = 0;
+      DataInputStream dataIn = new DataInputStream(
+          new BufferedInputStream(in));
+
+      double a = 0;
+      while (bytesRead < edgeSgmt.getLength()) {
+        int rowId = dataIn.readInt();
+        int colId = dataIn.readInt();
+        double prob = dataIn.readDouble();
+        bytesRead += 4 + 4 + 8;
+        a += rowId + colId + prob;
+
+        //context.write(new Text("" + 1), new Text("" + bytesRead));
       }
       in.close();
       end = System.currentTimeMillis();

@@ -5,6 +5,7 @@ import java.io.FileOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -155,7 +156,7 @@ public class PagerankPrep extends Configured implements Tool {
   }
 
   public static class ReduceStage2
-        extends Reducer<Text, Text, Text, Text> {
+        extends Reducer<Text, Text, Text, byte[]> {
 
     MatComparator mc = new MatComparator();
 
@@ -164,25 +165,28 @@ public class PagerankPrep extends Configured implements Tool {
                        final Context context)
         throws IOException, InterruptedException {
 
-  //    ArrayList<String> blockList = new ArrayList<String>();
-  //    for (Text val : values) {
-  //      blockList.add(val.toString());
-  //    }
-
-  //    Collections.sort(blockList, mc);
-
-  //    StringBuilder sb = new StringBuilder();
-  //    for (String val : blockList) {
-  //      sb.append(val + "\n");
-  //    }
-  //    blockList.clear();
-
-      StringBuilder sb = new StringBuilder();
+      ArrayList<Integer> dstIdList = new ArrayList<Integer>();
+      ArrayList<Integer> srcIdList = new ArrayList<Integer>();
+      ArrayList<Double> probList = new ArrayList<Double>();
       for (Text val: values) {
-        sb.append(val + "\n");
+        String lineText = val.toString();
+        String[] line = lineText.split("\t");
+        int dstId = Integer.parseInt(line[0]);
+        int srcId = Integer.parseInt(line[1]);
+        double prob = Double.parseDouble(line[2]);
+        dstIdList.add(dstId);
+        srcIdList.add(srcId);
+        probList.add(prob);
       }
 
-      context.write(key, new Text(sb.toString()));
+      ByteBuffer bbuf = ByteBuffer.allocate(dstIdList.size() * (4 + 4 + 8));
+      for (int i = 0; i < dstIdList.size(); ++i) {
+        bbuf.putInt(dstIdList.get(i));
+        bbuf.putInt(srcIdList.get(i));
+        bbuf.putDouble(probList.get(i));
+      }
+
+      context.write(key, bbuf.array());
     }
   }
 
@@ -297,8 +301,10 @@ public class PagerankPrep extends Configured implements Tool {
     job.setMapperClass(MapStage2.class);
     job.setReducerClass(ReduceStage2.class);
     job.setNumReduceTasks(conf.getInt("pagerank.num.reducers", 1));
+    job.setMapOutputKeyClass(Text.class);
+    job.setMapOutputValueClass(Text.class);
     job.setOutputKeyClass(Text.class);
-    job.setOutputValueClass(Text.class);
+    job.setOutputValueClass(byte[].class);
     job.setOutputFormatClass(MatBlockOutputFormat.class);
     FileInputFormat.setInputPaths(job, tmpPath);
     FileOutputFormat.setOutputPath(job, edgePath);
@@ -306,7 +312,7 @@ public class PagerankPrep extends Configured implements Tool {
   }
 
   public static class MatBlockOutputFormat<K, V>
-        extends IndexedTextOutputFormat<K, V> {
+        extends IndexedByteArrayOutputFormat<K, V> {
     @Override
     protected <K, V> String generateIndexForKeyValue(
         K key, V value, String path) {
