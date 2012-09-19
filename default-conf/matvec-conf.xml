@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+    <property>
+        <name>matvec.node.size</name>
+        <value>16</value>
+    </property>
+    <property>
+        <name>matvec.block.size</name>
+        <value>4</value>
+    </property>
+    <property>
+        <name>matvec.sparse.level</name>
+        <value>0.3</value>
+    </property>
+    <property>
+        <name>matvec.num.reduce</name>
+        <value>25</value>
+    </property>
+    <property>
+        <name>matvec.makesym</name>
+        <value>false</value>
+    </property>
+    <property>
+        <name>matvec.buildindex</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>matvec.useCache</name>
+        <value>false</value>
+    </property>
+</configuration>
