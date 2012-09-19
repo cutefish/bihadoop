@@ -178,7 +178,7 @@ public class PagerankMap2 extends Configured implements Tool {
       //current value
       ByteBuffer bbuf;
       if (edgeBlockRowId == 0) {
-        bbuf = ByteBuffer.allocate(count * 12 + 4 * 4);
+        bbuf = ByteBuffer.allocate(count * 12 + 4);
         bbuf.put((byte)0x55);
         bbuf.put((byte)0x00);
         bbuf.put((byte)0x55);
@@ -241,7 +241,7 @@ public class PagerankMap2 extends Configured implements Tool {
           count ++;
       }
 
-      bbuf = ByteBuffer.allocate(count * 12 + 4 * 4);
+      bbuf = ByteBuffer.allocate(count * 12 + 4);
       bbuf.put((byte)0xff);
       bbuf.put((byte)0x00);
       bbuf.put((byte)0xff);
@@ -253,6 +253,7 @@ public class PagerankMap2 extends Configured implements Tool {
         }
       }
 
+      System.out.println("map output buffer length: " + bbuf.array().length);
       context.write(new Text("" + edgeBlockRowId),
                     new BytesWritable(bbuf.array()));
       in.close();
@@ -306,6 +307,8 @@ public class PagerankMap2 extends Configured implements Tool {
       for (BytesWritable val : values) {
         ByteBuffer bbuf = ByteBuffer.wrap(val.getBytes());
         int length = val.getLength();
+        System.out.println("key: " + key.toString() + 
+                           " length: " + length);
         byte[] header = new byte[4];
         header[0] = bbuf.get();
         header[1] = bbuf.get();
@@ -316,14 +319,11 @@ public class PagerankMap2 extends Configured implements Tool {
             (header[2] == (byte) 0x55) &&
             (header[3] == (byte) 0x00)) {
           //previous rank
-          int size = length / 12;
+          int size = (length - 4) / 12;
           for (int i = 0; i < size; ++i) {
             int rowId = bbuf.getInt();
             double rank = bbuf.getDouble();
             int rowIdInBlock = rowId / (numNodes / blockSize);
-            if (rowIdInBlock >= arraySize) {
-              System.out.println("prev: rowId: " + rowId + " i: " + i);
-            }
             rowIdArray[rowIdInBlock] = rowId;
             prevRank[rowIdInBlock] = rank;
             if (rowIdInBlock >= max) max = rowIdInBlock;
@@ -333,14 +333,11 @@ public class PagerankMap2 extends Configured implements Tool {
                  (header[1] == (byte) 0x00) &&
                  (header[2] == (byte) 0xff) &&
                  (header[3] == (byte) 0x00)) {
-          int size = length / 12;
+          int size = (length - 4) / 12;
           for (int i = 0; i < size; ++i) {
             int rowId = bbuf.getInt();
             double rank = bbuf.getDouble();
             int rowIdInBlock = rowId / (numNodes / blockSize);
-            if (rowIdInBlock >= arraySize) {
-              System.out.println("curr: rowId: " + rowId + " i: " + i);
-            }
             rowIdArray[rowIdInBlock] = rowId;
             currRank[rowIdInBlock] += rank;
             if (rowIdInBlock >= max) max = rowIdInBlock;
@@ -353,7 +350,8 @@ public class PagerankMap2 extends Configured implements Tool {
       }
 
       context.setStatus("Writing output");
-      System.out.println("Writing output");
+
+      System.out.println("max: " + max);
 
       StringBuilder sb = new StringBuilder();
       int total = currRank.length;
@@ -362,7 +360,6 @@ public class PagerankMap2 extends Configured implements Tool {
       for (int i = 0; i <= max; ++i) {
         count ++;
         double xferProb = currRank[i];
-        if (Math.abs(xferProb) < threshold) continue;
         double elemPrevRank = prevRank[i];
         //add the coefficients
         //alpha / |G| + (1 - alpha) * rank
