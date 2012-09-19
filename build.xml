@@ -1,7 +1,7 @@
 <project name="MRCaching" default="compile">
 
     <!--Specify external class path-->
-    <property name="external.hadoop.home" location="/home/xyu40/hadoop/hadoop-1.0.3" />
+    <property name="external.hadoop.home" location="/home/${user.name}/hadoop/hadoop-1.0.3" />
     <path id="external.hadoop.classpath">
         <pathelement location="${external.hadoop.home}/build/classes"/>
         <!--<pathelement location="${external.hadoop.home}/conf"/>-->
