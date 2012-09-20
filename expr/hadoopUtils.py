@@ -238,15 +238,15 @@ def _collectResult(jobIdPrefix, jobIdRange, dstDir,
     slaves = fileToList(slaveFile)
     for jobId in jobIds:
         try:
-            os.makedirs('%s/%s_%s' %(dstDir, jobIdPrefix, jobId))
+            os.makedirs('%s/%s_%s' %(dstDir, jobIdPrefix, str(jobId).zfill(4)))
         except OSError:
             pass
         for slave in slaves:
             command = ("scp -i /home/%s/pem/HadoopExpr.pem "
-                       "-o UserKnownHostsFile=dev/null "
+                       "-o UserKnownHostsFile=/dev/null "
                        "-o StrictHostKeyChecking=no "
                        "-r %s:%s/userlogs/%s_%s/* %s/%s_%s"
-                       %(userName, slave, logHome, jobIdPrefix, jobId,
+                       %(userName, slave, logHome, jobIdPrefix, str(jobId).zfill(4),
                          dstDir, jobIdPrefix, jobId))
             print command
             subprocess.call(command.split(' '))
