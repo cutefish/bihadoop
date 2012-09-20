@@ -189,9 +189,9 @@ def cpConf(argv):
         sys.exit(-1)
     slaveList = fileToList('%s/conf/slaves' %hadoopHome)
     for slave in slaveList:
-        command = ("scp -i /home/%s/pem/HadoopExpr.pem"
-                   "-o UserKnownHostsFile=/dev/null"
-                   "-o StrictHostKeyChecking=no"
+        command = ("scp -i /home/%s/pem/HadoopExpr.pem "
+                   "-o UserKnownHostsFile=/dev/null "
+                   "-o StrictHostKeyChecking=no "
                    "-r %s/conf %s:%s" %(userName, hadoopHome, slave, hadoopHome))
         print command
         subprocess.call(command.split(' '))
