@@ -25,6 +25,7 @@ public abstract class DataGenerator {
     if (args.length < 1) {
       System.out.println("Available generators:");
       System.out.println("AdjSparseMat\n" + 
+                         "ExpandAdjFile\n" + 
                          "");
       System.exit(-1);
     }
