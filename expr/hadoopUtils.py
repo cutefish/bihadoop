@@ -12,6 +12,8 @@ import subprocess
 
 import boto.ec2
 
+userName = getpass.getuser()
+
 def normalizeName(fileName):
     return os.path.abspath(os.path.expanduser(fileName))
 
@@ -36,6 +38,7 @@ commandList = ["addConf",
                "slaves",
                "cpConf",
                "quickSetup",
+               "collectResult",
               ]
 
 def printUsage():
@@ -54,6 +57,8 @@ def run(argv):
         cpConf(argv[1:])
     elif (argv[0] == 'quickSetup'):
         quickSetup(argv[1:])
+    elif (argv[0] == 'collectResult'):
+        collectResult(argv[1:])
     else:
         printUsage()
 
@@ -102,7 +107,7 @@ def addConf(argv):
 Set master configurations
 """
 def _setMaster(nodeListFile='/tmp/ec2Private',
-               hadoopHome='/home/%s/hadoop/hadoop-1.0.3'%getpass.getuser()):
+               hadoopHome='/home/%s/hadoop/hadoop-1.0.3'%userName):
     #read master file
     nodeList = open(nodeListFile)
     master = nodeList.readline().strip()
@@ -144,7 +149,7 @@ def setMaster(argv):
 Set slaves file
 """
 def _setSlaves(numSlaves, nodeListFile='/tmp/ec2Private',
-               hadoopHome='/home/%s/hadoop/hadoop-1.0.3'%getpass.getuser()):
+               hadoopHome='/home/%s/hadoop/hadoop-1.0.3'%userName):
     #read slave list
     nodeList = open(nodeListFile)
     nodeList.readline()
@@ -176,7 +181,7 @@ Copy conf to slaves
 """
 def cpConf(argv):
     if len(argv) == 0:
-        hadoopHome = '/home/%s/hadoop/hadoop-1.0.3' %getpass.getuser()
+        hadoopHome = '/home/%s/hadoop/hadoop-1.0.3' %userName
     elif len(argv) == 1:
         hadoopHome = argv[0]
     else:
@@ -184,7 +189,10 @@ def cpConf(argv):
         sys.exit(-1)
     slaveList = fileToList('%s/conf/slaves' %hadoopHome)
     for slave in slaveList:
-        command = "scp -i /home/%s/pem/HadoopExpr.pem -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -r %s/conf %s:%s" %(getpass.getuser(), hadoopHome, slave, hadoopHome)
+        command = ("scp -i /home/%s/pem/HadoopExpr.pem "
+                   "-o UserKnownHostsFile=/dev/null "
+                   "-o StrictHostKeyChecking=no "
+                   "-r %s/conf %s:%s" %(userName, hadoopHome, slave, hadoopHome))
         print command
         subprocess.call(command.split(' '))
 
@@ -198,6 +206,64 @@ def quickSetup(argv):
     setMaster([])
     setSlaves(argv)
     cpConf([])
+
+"""
+parse range
+Range is a string representing ranges of integer, using ',' and '-'
+e.g. 1,2,3-5 means 1,2,3,4,5
+"""
+def parseRange(rangeStr):
+    commaList = rangeStr.split(',')
+    ret = []
+    for expr in commaList:
+        if '-' not in expr:
+            ret.append(int(expr))
+        else:
+            hyphenList = expr.split('-')
+            if len(hyphenList) != 2:
+                raise ValueError("range format incorrect: " + expr)
+            start = int(hyphenList[0])
+            end = int(hyphenList[1])
+            for num in range(start, end + 1):
+                ret.append(int(num))
+    return ret
+
+"""
+Collect result from machines
+"""
+def _collectResult(jobIdPrefix, jobIdRange, dstDir,
+                   slaveFile='/home/%s/hadoop/hadoop-1.0.3/conf/slaves'%userName,
+                   logHome='/home/%s/hadoop/logs'%userName):
+    jobIds = parseRange(jobIdRange)
+    slaves = fileToList(slaveFile)
+    for jobId in jobIds:
+        try:
+            os.makedirs('%s/%s_%s' %(dstDir, jobIdPrefix, str(jobId).zfill(4)))
+        except OSError:
+            pass
+        for slave in slaves:
+            command = ("scp -i /home/%s/pem/HadoopExpr.pem "
+                       "-o UserKnownHostsFile=/dev/null "
+                       "-o StrictHostKeyChecking=no "
+                       "-r %s:%s/userlogs/%s_%s/* %s/%s_%s"
+                       %(userName, slave, logHome, jobIdPrefix, str(jobId).zfill(4),
+                         dstDir, jobIdPrefix, jobId))
+            print command
+            subprocess.call(command.split(' '))
+
+def collectResult(argv):
+    if (len(argv) != 3) and (len(argv) != 5):
+        print "collectResult <jobIdPrefix> <jobIdRange> <dstDir> [slaveFile, logHome]"
+        sys.exit(-1)
+    jobIdPrefix = argv[0]
+    jobIdRange = argv[1]
+    dstDir = argv[2]
+    if len(argv) == 3:
+        _collectResult(jobIdPrefix, jobIdRange, dstDir)
+    else:
+        slaveFile = argv[3]
+        logHome = argv[4]
+        _collectResult(jobIdPrefix, jobIdRange, dstDir, slaveFile, logHome)
 
 if __name__ == '__main__':
     run(sys.argv[1:])

@@ -2,6 +2,6 @@
 
 import sys
 sys.dont_write_bytecode=True
-import hadoopSetup
+import hadoopUtils
 
-hadoopSetup.run(sys.argv[1:])
+hadoopUtils.run(sys.argv[1:])
