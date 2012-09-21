@@ -52,6 +52,9 @@ public class PagerankBlock extends Configured implements Tool {
 			if( line.length < 2 ) return;
 
 			if( line.length == 2 ) {	// vector. 
+        if (Integer.parseInt(line[0]) == 114505) {
+          context.setStatus("found 114505");
+        }
 				context.write(new IntWritable(Integer.parseInt(line[0])), 
                       new Text(line[1]));
       } 
@@ -76,6 +79,7 @@ public class PagerankBlock extends Configured implements Tool {
 		public void reduce (final IntWritable key, final Iterable<Text> values, 
                         final Context context) 
         throws IOException, InterruptedException {
+
 			int i;
 			float vector_val = 0;
 
@@ -101,13 +105,15 @@ public class PagerankBlock extends Configured implements Tool {
 				}
 			}
 
-			int blockCount = blockArr.size();
-			if( vectorArr == null || blockCount == 0 ) // missing vector or block.
-				return;
-
 			// output 'self' block to check convergence
+
 			Text self_output = GIMV.formatVectorElemOutput("s", vectorArr);
 			context.write(key, self_output );
+
+			int blockCount = blockArr.size();
+			if( vectorArr == null || blockCount == 0 ) {// missing vector or block.
+				return;
+      }
 
 			// For every matrix block, join it with vector and output partial results
 			Iterator<ArrayList<BlockElem<Double>>> blockArrIter = blockArr.iterator();
@@ -124,7 +130,7 @@ public class PagerankBlock extends Configured implements Tool {
 
 					while( cur_mult_result_iter.hasNext() ) {
 						VectorElem elem = cur_mult_result_iter.next();
-						if( cur_block_output.toString() != "o" )
+						if( cur_block_output.length() != 1)
 							cur_block_output.append(" ");
 						cur_block_output.append("" + elem.row + " " + elem.val);
 					}
@@ -160,6 +166,7 @@ public class PagerankBlock extends Configured implements Tool {
 		double alpha = 0;
 		double threshold = 0;
 		int numNodes = 1;
+    boolean reportedChange = false;
 
 		public void setup(Context context) {
       Configuration conf = context.getConfiguration();
@@ -187,8 +194,11 @@ public class PagerankBlock extends Configured implements Tool {
 					self_vector = GIMV.parseVectorVal(cur_str.substring(1), Double.class);
 					continue;
 				}
-
 				ArrayList<VectorElem<Double>> cur_vector = GIMV.parseVectorVal(cur_str.substring(1), Double.class);
+        if (cur_vector == null) {
+          throw new IOException("cur_vector null");
+        }
+
 				Iterator<VectorElem<Double>> vector_iter = cur_vector.iterator();
 
 				while( vector_iter.hasNext() ) {
@@ -209,15 +219,17 @@ public class PagerankBlock extends Configured implements Tool {
 			context.write( key, new Text(out_str.toString()) );
 
 			// compare the previous and the current PageRank
+
 			Iterator<VectorElem<Double>> sv_iter = self_vector.iterator();
 
-			while( sv_iter.hasNext() ) {
+			while( sv_iter.hasNext() && !reportedChange ) {
 				VectorElem<Double> cur_ve = sv_iter.next();
 			
 				double diff = Math.abs(cur_ve.val - out_vals[cur_ve.row]);
 
 				if( diff > threshold ) {
           context.getCounter(PrCounters.CONVERGE_CHECK).increment(1);
+          reportedChange = true;
           break;
         }
       }
@@ -232,9 +244,10 @@ public class PagerankBlock extends Configured implements Tool {
     //////////////////////////////////////////////////////////////////////
     public static class	MapStage25 extends 
         Mapper<LongWritable, Text, IntWritable, Text> {
+
 		int blockWidth;
 
-		public void configure(Context context) {
+		public void setup(Context context) {
       Configuration conf = context.getConfiguration();
       blockWidth = conf.getInt("pagerank.block.width", 1);
 		}
@@ -248,6 +261,7 @@ public class PagerankBlock extends Configured implements Tool {
 			final String[] tokens = line[1].substring(1).split(" ");
 			int i;
 			int block_id = Integer.parseInt(line[0] );
+
 
 			for(i = 0; i < tokens.length; i+=2) {
 				int elem_row = Integer.parseInt(tokens[i]);
@@ -303,7 +317,7 @@ public class PagerankBlock extends Configured implements Tool {
       long start, end;
 
       blkEdgePath = new Path(edgePath.getParent(), "blkedge");
-      initNodePath = new Path(edgePath.getParent(), "initNodeRank");
+      initNodePath = new Path(edgePath.getParent(), "initialNodeRank");
       nodePath = new Path(edgePath.getParent(), "node");
       tmpPath = new Path(edgePath.getParent(), "tmp");
 
@@ -378,12 +392,17 @@ public class PagerankBlock extends Configured implements Tool {
                            (iterEnd - iterStart) + " ms");
       }
 
+      //put outPath into nodePath
+      waitForJobFinish(configStage25());
+      fs.delete(outPath);
+      fs.rename(nodePath, outPath);
+
       return 0;
     }
 
     private void checkValidity() {
-      int blockSize = conf.getInt("pagerank.block.width", -1);
-      if (blockSize == -1) 
+      int blockWidth = conf.getInt("pagerank.block.width", -1);
+      if (blockWidth == -1) 
         throw new IllegalArgumentException("block width not set");
       int numNodes = conf.getInt("pagerank.num.nodes", -1);
       if (numNodes == -1) 
@@ -440,6 +459,20 @@ public class PagerankBlock extends Configured implements Tool {
     job.setOutputValueClass(Text.class);
     FileInputFormat.setInputPaths(job, tmpPath);  
     FileOutputFormat.setOutputPath(job, outPath);  
+		return job;
+  }
+
+  // Configure pass25
+  protected Job configStage25 () throws Exception {
+    int numReducers = conf.getInt("pagerank.num.reducers", 1);
+    Job job = new Job(conf, "PagerankBlockStage2");
+    job.setJarByClass(PagerankBlock.class);
+    job.setMapperClass(MapStage25.class);
+    job.setNumReduceTasks(0);
+    job.setOutputKeyClass(IntWritable.class);
+    job.setOutputValueClass(Text.class);
+    FileInputFormat.setInputPaths(job, outPath);  
+    FileOutputFormat.setOutputPath(job, nodePath);  
 		return job;
   }
 }

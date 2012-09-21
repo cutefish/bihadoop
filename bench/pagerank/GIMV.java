@@ -66,7 +66,6 @@ public class GIMV {
     ArrayList arr = new ArrayList<VectorElem<T>>();
     final String[] tokens = strVal.split(" ");
     int i;
-
     for(i = 0; i < tokens.length; i += 2) {
       short row = Short.parseShort(tokens[i]);
       if( type.getSimpleName().equals("Integer") ) {

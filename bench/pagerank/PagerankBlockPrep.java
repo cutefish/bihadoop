@@ -112,11 +112,11 @@ public class PagerankBlockPrep extends Configured implements Tool {
       int colId = Integer.parseInt(line[1]);
       int blockRowId = rowId / blockWidth;
       int blockColId = colId / blockWidth;
-      int inBlockRow = rowId % blockWidth;
-      int inBlockCol = colId % blockWidth;
+      //int inBlockRow = rowId % blockWidth;
+      //int inBlockCol = colId % blockWidth;
       //tricked transpose
-      //int inBlockRow = colId % blockWidth;
-      //int inBlockCol = rowId % blockWidth;
+      int inBlockRow = colId % blockWidth;
+      int inBlockCol = rowId % blockWidth;
 
       context.write(new Text("" + blockRowId + "\t" + blockColId), 
                     new Text("" + inBlockRow + " " + inBlockCol + " " + line[2]) );
@@ -249,6 +249,10 @@ public class PagerankBlockPrep extends Configured implements Tool {
 
   public int blockEdges() throws Exception {
     conf = getConf();
+    if (conf == null) {
+      conf = new Configuration();
+      setConf(conf);
+    }
     conf.addResource("pagerank-conf.xml");
     checkValidity();
 
@@ -268,6 +272,10 @@ public class PagerankBlockPrep extends Configured implements Tool {
 
   public int initNodes() throws Exception {
     conf = getConf();
+    if (conf == null) {
+      conf = new Configuration();
+      setConf(conf);
+    }
     conf.addResource("pagerank-conf.xml");
     checkValidity();
 
@@ -287,7 +295,7 @@ public class PagerankBlockPrep extends Configured implements Tool {
     for (int i = 0; i < numNodes; i += blockWidth) {
       StringBuilder sb = new StringBuilder();
       int blockId = i / blockWidth;
-      sb.append("" + blockId + "\t");
+      sb.append("" + blockId + "\tv");
       for (int j = 0; j < blockWidth; ++j) {
         boolean finish = false;
         if ((j == blockWidth - 1) ||
