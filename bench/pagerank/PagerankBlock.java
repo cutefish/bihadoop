@@ -7,6 +7,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.util.ArrayList;
+import java.util.Iterator;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
@@ -22,7 +23,7 @@ import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
-import org.apache.hadoop.map2.IndexedTextOutputFormat;
+import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.hadoop.util.Tool;
 
@@ -160,7 +161,7 @@ public class PagerankBlock extends Configured implements Tool {
 		double threshold = 0;
 		int numNodes = 1;
 
-		public void configure(JobConf job) {
+		public void setup(Context context) {
       Configuration conf = context.getConfiguration();
       numNodes = conf.getInt("pagerank.num.nodes", 1);
 			blockWidth = conf.getInt("pagerank.block.width", 1);
@@ -205,7 +206,7 @@ public class PagerankBlock extends Configured implements Tool {
 				out_str.append("" + i + " " + out_vals[i]) ;
 			}
 
-			context.write( key, new Text(out_str) );
+			context.write( key, new Text(out_str.toString()) );
 
 			// compare the previous and the current PageRank
 			Iterator<VectorElem<Double>> sv_iter = self_vector.iterator();
@@ -216,7 +217,7 @@ public class PagerankBlock extends Configured implements Tool {
 				double diff = Math.abs(cur_ve.val - out_vals[cur_ve.row]);
 
 				if( diff > threshold ) {
-					reporter.incrCounter(PrCounters.CONVERGE_CHECK, 1);
+          context.getCounter(PrCounters.CONVERGE_CHECK).increment(1);
           break;
         }
       }
@@ -233,7 +234,7 @@ public class PagerankBlock extends Configured implements Tool {
         Mapper<LongWritable, Text, IntWritable, Text> {
 		int blockWidth;
 
-		public void configure(JobConf job) {
+		public void configure(Context context) {
       Configuration conf = context.getConfiguration();
       blockWidth = conf.getInt("pagerank.block.width", 1);
 		}
@@ -260,246 +261,186 @@ public class PagerankBlock extends Configured implements Tool {
     //////////////////////////////////////////////////////////////////////
     // command line interface
     //////////////////////////////////////////////////////////////////////
-    protected Path edge_path = null;
-    protected Path vector_path = null;
-    protected Path tempmv_path = null;
-	protected Path output_path = null;
-    protected Path vector_unfold_path = new Path("pr_vector");
-	protected Path minmax_path = new Path("pr_minmax");
-	protected Path distr_path = new Path("pr_distr");
-	protected String local_output_path;
-	protected int number_nodes = 0;
-	protected int niteration = 32;
-	protected double mixing_c = 0.85f;
-	protected int nreducers = 1;
-	protected int make_symmetric = 0;		// convert directed graph to undirected graph
-	protected int blockWidth = 64;
-	FileSystem fs ;
+    protected Path edgePath = null;
+    protected Path blkEdgePath = null;
+    protected Path initNodePath = null;
+    protected Path nodePath = null;
+    protected Path initPath = null;
+    protected Path tmpPath = null;
+    protected Path outPath = null;
+    protected Configuration conf;
 
-    // Main entry point.
-    public static void main (final String[] args) throws Exception
-    {
-		final int result = ToolRunner.run(new Configuration(), new PagerankBlock(), args);
-
-		System.exit(result);
+    public static void main(final String[] args) {
+      try {
+        final int result = ToolRunner.run(new Configuration(), 
+                                          new PagerankBlock(),
+                                          args);
+        System.exit(result);
+      }
+      catch (Exception e) {
+        System.out.println("Exception: " + StringUtils.stringifyException(e));
+        System.exit(-1);
+      }
     }
 
+    protected static int printUsage () {
+      System.out.println("PagerankBlock <edgePath> <outPath>");
 
-    // Print the command-line usage text.
-    protected static int printUsage ()
-    {
-		System.out.println("PagerankBlock <edge_path> <vector_path> <tempmv_path> <output_path> <# of nodes> <# of reducers> <number of iteration> <block width>");
-
-		ToolRunner.printGenericCommandUsage(System.out);
-
-		return -1;
+      return -1;
     }
 
-	// submit the map/reduce job.
-    public int run (final String[] args) throws Exception
-    {
-		if( args.length != 8 ) {
-			return printUsage();
-		}
-		int i;
+    public int run (final String[] args) throws Exception {
+      if( args.length != 2 ) {
+        return printUsage();
+      }
+      conf = getConf();
+      conf.addResource("pagerank-conf.xml");
+      checkValidity();
 
-		edge_path = new Path(args[0]);
-		vector_path = new Path(args[1]);
-		tempmv_path = new Path(args[2]);
-		output_path = new Path(args[3]);
-		number_nodes = Integer.parseInt(args[4]);
-		nreducers = Integer.parseInt(args[5]);
-		niteration = Integer.parseInt(args[6]);
-		blockWidth = Integer.parseInt(args[7]);
+      edgePath = new Path(args[0]);
+      outPath = new Path(args[1]);
+      FileSystem fs = FileSystem.get(conf);
+      long start, end;
 
-		local_output_path = args[2] + "_temp";
+      blkEdgePath = new Path(edgePath.getParent(), "blkedge");
+      initNodePath = new Path(edgePath.getParent(), "initNodeRank");
+      nodePath = new Path(edgePath.getParent(), "node");
+      tmpPath = new Path(edgePath.getParent(), "tmp");
 
-		converge_threshold = ((double)1.0/(double) number_nodes)/50;
+      PagerankBlockPrep prepare = new PagerankBlockPrep();
+      prepare.setPaths(edgePath.toString(), blkEdgePath.toString(),
+                      initNodePath.toString());
 
-		System.out.println("\n-----===[PEGASUS: A Peta-Scale Graph Mining System]===-----\n");
-		System.out.println("[PEGASUS] Computing PageRank using block method. Max iteration = " +niteration + ", threshold = " + converge_threshold + "\n");
+      if (conf.getBoolean("pagerank.initialize", true)) {
+        fs.delete(initNodePath, true);
+        fs.delete(blkEdgePath, true);
+        System.out.println("Generating initial node");
+        prepare.initNodes();
+        System.out.println("done");
+        System.out.println("Tranforming edges");
+        start = System.currentTimeMillis();
+        prepare.blockEdges();
+        end = System.currentTimeMillis();
+        System.out.println("===block experiment===<time>[PagerankBlockPrep]: " + 
+                           (end - start) + " ms");
+      }
+      else {
+        if (!fs.exists(initNodePath)) {
+          System.out.println("Generating initial node");
+          prepare.initNodes();
+          System.out.println("done");
+        }
+        if (!fs.exists(blkEdgePath)) {
+          System.out.println("Tranforming edges");
+          start = System.currentTimeMillis();
+          prepare.blockEdges();
+          end = System.currentTimeMillis();
+          System.out.println("===block experiment===<time>[PagerankBlockPrep]: " + 
+                             (end - start) + " ms");
+        }
+      }
 
-		fs = FileSystem.get(getConf());
+      fs.delete(nodePath, true);
+      fs.delete(outPath, true);
+      int maxNumIterations = conf.getInt("pagerank.max.num.iteration", 100);
+      System.out.println("Start iterating");
+      boolean converged = false;
+      start = System.currentTimeMillis();
+      for (int i = 0; i < maxNumIterations; ++i) {
+        long iterStart = System.currentTimeMillis();
+        Job job;
+        if (i == 0) {
+          //first iteration read from initNodePath
+          waitForJobFinish(configStage0());
+        }
+        else {
+          //Every iteration we read from edgePath and nodePath and output to
+          //outPath.
+          waitForJobFinish(configStage1());
+        }
+        job = waitForJobFinish(configStage2());
+        Counters c = job.getCounters();
+        long changed = c.findCounter(PrCounters.CONVERGE_CHECK).getValue();
+        System.out.println("Iteration: " + i + " changed: " + changed);
+        if (changed == 0) {
+          System.out.println("Converged.");
+          fs.delete(tmpPath);
+          fs.delete(nodePath);
+          converged = true;
+          break;
+        }
+        fs.delete(nodePath);
+        fs.delete(tmpPath);
+        fs.rename(outPath, nodePath);
+        long iterEnd = System.currentTimeMillis();
+        System.out.println("===map2 experiment===<iter time>" + 
+                           "[PagerankMap2Iterative]: " + 
+                           (iterEnd - iterStart) + " ms");
+      }
 
-		// Iteratively calculate neighborhood function. 
-		for (i = 0; i < niteration; i++) {
-			JobClient.runJob(configStage1());
-			RunningJob job = JobClient.runJob(configStage2());
-
-			Counters c = job.getCounters();
-			long changed = c.getCounter(PrCounters.CONVERGE_CHECK);
-			System.out.println("Iteration = " + i + ", changed reducer = " + changed);
-
-			if( changed == 0 ) {
-				System.out.println("PageRank vector converged. Now preparing to finish...");
-				fs.delete(vector_path);
-				fs.delete(tempmv_path);
-				fs.rename(output_path, vector_path);
-				break;
-			}
-
-			// rotate directory
-			fs.delete(vector_path);
-			fs.delete(tempmv_path);
-			fs.rename(output_path, vector_path);
-		}
-
-		if( i == niteration ) {
-			System.out.println("Reached the max iteration. Now preparing to finish...");
-		}
-
-		// unfold the block PageRank to plain format
-		System.out.println("Unfolding the block PageRank to plain format...");
-		JobClient.runJob(configStage25());
-
-
-		// find min/max of pageranks
-		System.out.println("Finding minimum and maximum pageranks...");
-		JobClient.runJob(configStage3());
-
-		FileUtil.fullyDelete( FileSystem.getLocal(getConf()), new Path(local_output_path));
-		String new_path = local_output_path + "/" ;
-		fs.copyToLocalFile(minmax_path, new Path(new_path) ) ;
-
-		MinMaxInfo mmi = PagerankNaive.readMinMax( new_path );
-		System.out.println("min = " + mmi.min + ", max = " + mmi.max );
-
-		// find distribution of pageranks
-		JobClient.runJob(configStage4(mmi.min, mmi.max));
-
-
-		System.out.println("\n[PEGASUS] PageRank computed.");
-		System.out.println("[PEGASUS] The final PageRanks are in the HDFS pr_vector.");
-		System.out.println("[PEGASUS] The minium and maximum PageRanks are in the HDFS pr_minmax.");
-		System.out.println("[PEGASUS] The histogram of PageRanks in 1000 bins between min_PageRank and max_PageRank are in the HDFS pr_distr.\n");
-
-		return 0;
+      return 0;
     }
 
-	// Configure pass1
-    protected JobConf configStage1 () throws Exception
-    {
-		final JobConf conf = new JobConf(getConf(), PagerankBlock.class);
-		conf.set("number_nodes", "" + number_nodes);
-		conf.set("mixing_c", "" + mixing_c);
-		conf.set("make_symmetric", "" + make_symmetric);
-		conf.set("blockWidth", "" + blockWidth);
-		conf.setJobName("Pagerank_Stage1");
-		
-		conf.setMapperClass(MapStage1.class);        
-		conf.setReducerClass(RedStage1.class);
-
-		fs.delete(tempmv_path, true);
-
-		FileInputFormat.setInputPaths(conf, edge_path, vector_path);  
-		FileOutputFormat.setOutputPath(conf, tempmv_path);  
-
-		conf.setNumReduceTasks( nreducers );
-
-		conf.setOutputKeyClass(IntWritable.class);
-		conf.setOutputValueClass(Text.class);
-
-		return conf;
+    private void checkValidity() {
+      int blockSize = conf.getInt("pagerank.block.width", -1);
+      if (blockSize == -1) 
+        throw new IllegalArgumentException("block width not set");
+      int numNodes = conf.getInt("pagerank.num.nodes", -1);
+      if (numNodes == -1) 
+        throw new IllegalArgumentException("number of nodes not set");
     }
 
-	// Configure pass2
-    protected JobConf configStage2 () throws Exception
-    {
-		final JobConf conf = new JobConf(getConf(), PagerankBlock.class);
-		conf.set("number_nodes", "" + number_nodes);
-		conf.set("mixing_c", "" + mixing_c);
-		conf.set("converge_threshold", "" + converge_threshold);
-		conf.set("blockWidth", "" + blockWidth);
-		conf.setJobName("Pagerank_Stage2");
-		
-		conf.setMapperClass(MapStage2.class);        
-		conf.setReducerClass(RedStage2.class);
-
-		fs.delete(output_path, true);
-
-		FileInputFormat.setInputPaths(conf, tempmv_path);  
-		FileOutputFormat.setOutputPath(conf, output_path);  
-
-		conf.setNumReduceTasks( nreducers );
-
-		conf.setOutputKeyClass(IntWritable.class);
-		conf.setOutputValueClass(Text.class);
-
-		return conf;
+    private Job waitForJobFinish(Job job) throws Exception {
+      boolean succeeded = job.waitForCompletion(true);
+      if (!succeeded) {
+        throw new RuntimeException(job.toString());
+      }
+      return job;
     }
 
-    // Configure Stage25
-    protected JobConf configStage25() throws Exception
-    {
-		final JobConf conf = new JobConf(getConf(), ConCmptBlock.class);
-		conf.set("blockWidth", "" + blockWidth);
-		conf.setJobName("Pagerank_Stage25");
+  protected Job configStage0() throws Exception {
+    int numReducers = conf.getInt("pagerank.num.reducers", 1);
+    Job job = new Job(conf, "PagerankBlockStage0");
+    job.setJarByClass(PagerankBlock.class);
+    job.setMapperClass(MapStage1.class);
+    job.setReducerClass(RedStage1.class);
+    job.setNumReduceTasks(numReducers);
+    job.setOutputKeyClass(IntWritable.class);
+    job.setOutputValueClass(Text.class);
+		FileInputFormat.setInputPaths(job, blkEdgePath, initNodePath);  
+		FileOutputFormat.setOutputPath(job, tmpPath);  
+		return job;
+  }
 
-		conf.setMapperClass(MapStage25.class);
+  // Configure pass1
+  protected Job configStage1() throws Exception {
+    int numReducers = conf.getInt("pagerank.num.reducers", 1);
+    Job job = new Job(conf, "PagerankBlockStage1");
+    job.setJarByClass(PagerankBlock.class);
+    job.setMapperClass(MapStage1.class);
+    job.setReducerClass(RedStage1.class);
+    job.setNumReduceTasks(numReducers);
+    job.setOutputKeyClass(IntWritable.class);
+    job.setOutputValueClass(Text.class);
+		FileInputFormat.setInputPaths(job, blkEdgePath, nodePath);  
+		FileOutputFormat.setOutputPath(job, tmpPath);  
+		return job;
+  }
 
-		fs.delete(vector_unfold_path, true);
 
-		FileInputFormat.setInputPaths(conf, vector_path);  
-		FileOutputFormat.setOutputPath(conf, vector_unfold_path);  
-
-		conf.setNumReduceTasks( 0 );		//This is essential for map-only tasks.
-
-		conf.setOutputKeyClass(IntWritable.class);
-		conf.setOutputValueClass(Text.class);
-
-		return conf;
-    }
-
-	// Configure pass3
-    protected JobConf configStage3 () throws Exception
-    {
-		final JobConf conf = new JobConf(getConf(), PagerankNaive.class);
-		conf.set("number_nodes", "" + number_nodes);
-		conf.set("mixing_c", "" + mixing_c);
-		conf.set("converge_threshold", "" + converge_threshold);
-		conf.setJobName("Pagerank_Stage3");
-		
-		conf.setMapperClass(PagerankNaive.MapStage3.class);        
-		conf.setReducerClass(PagerankNaive.RedStage3.class);
-		conf.setCombinerClass(PagerankNaive.RedStage3.class);
-
-		fs.delete(minmax_path, true);
-
-		FileInputFormat.setInputPaths(conf, vector_unfold_path);  
-		FileOutputFormat.setOutputPath(conf, minmax_path);  
-
-		conf.setNumReduceTasks( 1 );
-
-		conf.setOutputKeyClass(IntWritable.class);
-		conf.setOutputValueClass(DoubleWritable.class);
-
-		return conf;
-    }
-
-	// Configure pass4
-    protected JobConf configStage4 (double min_pr, double max_pr) throws Exception
-    {
-		final JobConf conf = new JobConf(getConf(), PagerankNaive.class);
-		conf.set("min_pr", "" + min_pr);
-		conf.set("max_pr", "" + max_pr);
-
-		conf.setJobName("Pagerank_Stage4");
-		
-		conf.setMapperClass(PagerankNaive.MapStage4.class);        
-		conf.setReducerClass(PagerankNaive.RedStage4.class);
-		conf.setCombinerClass(PagerankNaive.RedStage4.class);
-
-		fs.delete(distr_path, true);
-
-		FileInputFormat.setInputPaths(conf, vector_unfold_path);  
-		FileOutputFormat.setOutputPath(conf, distr_path);  
-
-		conf.setNumReduceTasks( nreducers );
-
-		conf.setOutputKeyClass(IntWritable.class);
-		conf.setOutputValueClass(IntWritable.class);
-
-		return conf;
-    }
+  // Configure pass2
+  protected Job configStage2 () throws Exception {
+    int numReducers = conf.getInt("pagerank.num.reducers", 1);
+    Job job = new Job(conf, "PagerankBlockStage2");
+    job.setJarByClass(PagerankBlock.class);
+    job.setMapperClass(MapStage2.class);
+    job.setReducerClass(RedStage2.class);
+    job.setNumReduceTasks(numReducers);
+    job.setOutputKeyClass(IntWritable.class);
+    job.setOutputValueClass(Text.class);
+    FileInputFormat.setInputPaths(job, tmpPath);  
+    FileOutputFormat.setOutputPath(job, outPath);  
+		return job;
+  }
 }
 

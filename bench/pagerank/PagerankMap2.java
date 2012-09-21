@@ -433,29 +433,29 @@ public class PagerankMap2 extends Configured implements Tool {
       fs.delete(initNodePath, true);
       fs.delete(edgePath, true);
       System.out.println("Generating initial node");
-      PagerankPrep.initNode(initNodePath);
+      PagerankMap2Prep.initNode(initNodePath);
       System.out.println("done");
       String[] prepArgs = {inPath.toString(), edgePath.toString()};
       System.out.println("Tranforming edges");
       start = System.currentTimeMillis();
-      PagerankPrep.main(prepArgs);
+      PagerankMap2Prep.main(prepArgs);
       end = System.currentTimeMillis();
-      System.out.println("===map2 experiment===<time>[PagerankPrep]: " + 
+      System.out.println("===map2 experiment===<time>[PagerankMap2Prep]: " + 
                        (end - start) + " ms");
     }
     else {
       if (!fs.exists(initNodePath)) {
         System.out.println("Generating initial node");
-        PagerankPrep.initNode(initNodePath);
+        PagerankMap2Prep.initNode(initNodePath);
         System.out.println("done");
       }
       if (!fs.exists(edgePath)) {
         String[] prepArgs = {inPath.toString(), edgePath.toString()};
         System.out.println("Tranforming edges");
         start = System.currentTimeMillis();
-        PagerankPrep.main(prepArgs);
+        PagerankMap2Prep.main(prepArgs);
         end = System.currentTimeMillis();
-        System.out.println("===map2 experiment===<time>[PagerankPrep]: " + 
+        System.out.println("===map2 experiment===<time>[PagerankMap2Prep]: " + 
                            (end - start) + " ms");
       }
     }

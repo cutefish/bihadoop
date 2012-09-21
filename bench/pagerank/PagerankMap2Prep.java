@@ -40,7 +40,7 @@ import org.apache.hadoop.map2.*;
  * The format of index file is
  * IDX_START | index | SEG_START | offset | len | IDX_END
  */
-public class PagerankPrep extends Configured implements Tool {
+public class PagerankMap2Prep extends Configured implements Tool {
 
   /****************************************************************************
    * Stage 1.
@@ -203,9 +203,9 @@ public class PagerankPrep extends Configured implements Tool {
   public static void main(final String[] args) {
     try {
       final int result = ToolRunner.run(new Configuration(), 
-                                        new PagerankPrep(),
+                                        new PagerankMap2Prep(),
                                         args);
-      System.out.println("PagerankPrep main return: " + result);
+      System.out.println("PagerankMap2Prep main return: " + result);
       return;
     }
     catch (Exception e) {
@@ -215,7 +215,7 @@ public class PagerankPrep extends Configured implements Tool {
   }
 
   protected static int printUsage() {
-    System.out.println("PagerankPrep <edgePath> <blkedgePath>");
+    System.out.println("PagerankMap2Prep <edgePath> <blkedgePath>");
     return -1;
   }
 
@@ -283,8 +283,8 @@ public class PagerankPrep extends Configured implements Tool {
   }
 
   private Job configStage1() throws Exception {
-    Job job = new Job(conf, "PagerankPrepStage1");
-    job.setJarByClass(PagerankPrep.class);
+    Job job = new Job(conf, "PagerankMap2Prep");
+    job.setJarByClass(PagerankMap2Prep.class);
     job.setMapperClass(MapStage1.class);
     job.setReducerClass(ReduceStage1.class);
     job.setNumReduceTasks(conf.getInt("pagerank.num.reducers", 1));
@@ -296,8 +296,8 @@ public class PagerankPrep extends Configured implements Tool {
   }
   
   private Job configStage2() throws Exception {
-    Job job = new Job(conf, "PagerankPrepStage2");
-    job.setJarByClass(PagerankPrep.class);
+    Job job = new Job(conf, "PagerankMap2PrepStage2");
+    job.setJarByClass(PagerankMap2Prep.class);
     job.setMapperClass(MapStage2.class);
     job.setReducerClass(ReduceStage2.class);
     job.setNumReduceTasks(conf.getInt("pagerank.num.reducers", 1));

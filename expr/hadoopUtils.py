@@ -247,7 +247,7 @@ def _collectResult(jobIdPrefix, jobIdRange, dstDir,
                        "-o StrictHostKeyChecking=no "
                        "-r %s:%s/userlogs/%s_%s/* %s/%s_%s"
                        %(userName, slave, logHome, jobIdPrefix, str(jobId).zfill(4),
-                         dstDir, jobIdPrefix, jobId))
+                         dstDir, jobIdPrefix, str(jobId).zfill(4)))
             print command
             subprocess.call(command.split(' '))
 

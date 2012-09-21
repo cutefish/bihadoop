@@ -10,11 +10,13 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Iterator;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
@@ -27,74 +29,98 @@ import org.apache.hadoop.util.StringUtils;
 
 
 public class PagerankBlockPrep extends Configured implements Tool {
-  //////////////////////////////////////////////////////////////////////
-  // STAGE 1: convert vectors and edges to block format
-	//		(a) (vector)  ROWID		vVALUE    =>    BLOCKID	IN-BLOCK-INDEX VALUE
-	//      (b) (real matrix)  ROWID		COLID		VALUE    
-	//            =>  BLOCK-ROW		BLOCK-COL		IN-BLOCK-ROW IN-BLOCK-COL VALUE
-	//      (c) (0-1 matrix)  ROWID		COLID
-	//            =>  BLOCK-ROW		BLOCK-COL		IN-BLOCK-ROW IN-BLOCK-COL VALUE
-	//////////////////////////////////////////////////////////////////////
+  /****************************************************************************
+   * Stage 1.
+   * Normalize and transpose the matrix
+   ***************************************************************************/
   public static class MapStage1
+        extends Mapper<Object, Text, Text, Text> {
+
+    public void map(final Object key, final Text value,
+                    final Context context)
+        throws IOException, InterruptedException {
+
+      String lineText = value.toString();
+      //ignore comment
+      if (lineText.startsWith("#")) return;
+
+      final String[] line = lineText.split("\t");
+      //ignore ill-formed lines
+      if (line.length != 2) return;
+
+      //key = srcId, value = dstId
+      context.write(new Text(line[0]), new Text(line[1]));
+    }
+  }
+
+  public static class ReduceStage1
+        extends Reducer<Text, Text, Text, Text> {
+
+    public void reduce(final Text key,
+                       final Iterable<Text> values,
+                       final Context context)
+        throws IOException, InterruptedException {
+
+      //The probability of reaching a dstId node from srcId is
+      //numOfEdgesFromSrcId ^ (-1)
+      ArrayList<String> dstNodeList = new ArrayList<String>();
+      for (Text val: values) {
+        dstNodeList.add(val.toString());
+      }
+      float prob = 0;
+      if (dstNodeList.size() > 0) 
+        prob = 1 / (float)dstNodeList.size();
+
+      for (String val: dstNodeList) {
+        context.write(new Text(val), 
+                      new Text(key.toString() + "\t" + prob));
+      }
+    }
+  }
+
+  /****************************************************************************
+   * Stage 2.
+   * Block the matrix
+   ***************************************************************************/
+  public static class MapStage2
         extends Mapper<LongWritable, Text, Text, Text> {
-		int block_size;
-		int matrix_row;
-		int makesym;
 
-		public void configure(JobConf job) {
-			block_size = Integer.parseInt(job.get("block_size"));
-			matrix_row = Integer.parseInt(job.get("matrix_row"));
-			makesym = Integer.parseInt(job.get("makesym"));
+    int blockWidth = 1;
+    int numNodes = 1;
 
-			System.out.println("MapStage1: block_size = " + block_size + ", matrix_row=" + matrix_row + ", makesym = " + makesym);
-		}
+		public void setup(Context context) 
+        throws IOException, InterruptedException {
 
-		public void map (final LongWritable key, final Text value, final OutputCollector<Text, Text> output, final Reporter reporter) throws IOException
-		{
-			String line_text = value.toString();
-			if (line_text.startsWith("#"))				// ignore comments in edge file
+      Configuration conf = context.getConfiguration();
+      numNodes = conf.getInt("pagerank.num.nodes", -1);
+      blockWidth = conf.getInt("pagerank.block.width", -1);
+    }
+
+		public void map(final LongWritable key, final Text value, 
+                    final Context context) 
+        throws IOException, InterruptedException {
+
+			String lineText = value.toString();
+			if (lineText.startsWith("#"))				// ignore comments in edge file
 				return;
 
-			final String[] line = line_text.split("\t");
+			final String[] line = lineText.split("\t");
 			if(line.length < 2 )
 				return;
 
-			if( line[1].charAt(0) == 'v') {
-				// (vector)  ROWID		vVALUE    =>    BLOCKID	IN-BLOCK-INDEX VALUE
-				int row_id = Integer.parseInt(line[0]);
-				int block_id = row_id / block_size;
-				int in_block_index = row_id % block_size;
+      int rowId = Integer.parseInt(line[0]);
+      int colId = Integer.parseInt(line[1]);
+      int blockRowId = rowId / blockWidth;
+      int blockColId = colId / blockWidth;
+      int inBlockRow = rowId % blockWidth;
+      int inBlockCol = colId % blockWidth;
+      //tricked transpose
+      //int inBlockRow = colId % blockWidth;
+      //int inBlockCol = rowId % blockWidth;
 
-				output.collect( new Text("" + block_id), new Text("" + in_block_index + " " + line[1].substring(1)) );
-			} else {
-				int row_id = Integer.parseInt(line[0]);
-				int col_id = Integer.parseInt(line[1]);
-				int block_rowid = row_id / block_size;
-				int block_colid = col_id / block_size;
-				int in_block_row = col_id % block_size;	// trick : transpose
-				int in_block_col = row_id % block_size; // trick : transpose
-
-				if( line.length == 3 ) {
-					//      (real matrix)  ROWID		COLID		VALUE    
-					//            =>  BLOCK-ROW		BLOCK-COL		IN-BLOCK-ROW IN-BLOCK-COL VALUE
-					String elem_val;
-					if(line[2].charAt(0) == 'v')
-						 elem_val = line[2].substring(1);
-					else
-						elem_val = line[2];
-
-					output.collect( new Text("" + block_rowid + "\t" + block_colid), new Text("" + in_block_row + " " + in_block_col + " " + line[2]) );
-				} else {
-					//      (0-1 matrix)  ROWID		COLID		
-					//            =>  BLOCK-ROW		BLOCK-COL		IN-BLOCK-ROW IN-BLOCK-COL
-					output.collect( new Text("" + block_rowid + "\t" + block_colid), new Text("" + in_block_row + " " + in_block_col) );
-
-					if( makesym == 1 )	// output transposed entry
-						output.collect( new Text("" + block_colid + "\t" + block_rowid), new Text("" + in_block_col + " " + in_block_row) );
-				}
-			}
+      context.write(new Text("" + blockRowId + "\t" + blockColId), 
+                    new Text("" + inBlockRow + " " + inBlockCol + " " + line[2]) );
 		}
-
 	}
 
 
@@ -129,27 +155,22 @@ public class PagerankBlockPrep extends Configured implements Tool {
 		}   
 	}   
 
-    public static class RedStage1 extends MapReduceBase	implements Reducer<Text, Text, Text, Text>
-    {
-		String out_prefix = "";
-		MvPrepComparator mpc = new MvPrepComparator();
+  public static class ReduceStage2 extends Reducer<Text, Text, Text, Text> {
 
-		public void configure(JobConf job) {
-			out_prefix = job.get("out_prefix");
+    MvPrepComparator mpc = new MvPrepComparator();
 
-			System.out.println("RedStage1: out_prefix = " + out_prefix);
-		}
+		public void reduce (final Text key, final Iterable<Text> values, 
+                        Context context) 
+        throws IOException, InterruptedException {
 
-		public void reduce (final Text key, final Iterator<Text> values, final OutputCollector<Text, Text> output, final Reporter reporter) throws IOException
-        {
 			String out_value = "";
 			ArrayList<String> value_al = new ArrayList<String>();
 
-			while (values.hasNext()) {
+			for (Text val : values) {
 				// vector: key=BLOCKID, value= IN-BLOCK-INDEX VALUE
 				// matrix: key=BLOCK-ROW		BLOCK-COL, value=IN-BLOCK-ROW IN-BLOCK-COL VALUE
 
-				String value_text = values.next().toString();
+				String value_text = val.toString();
 				value_al.add( value_text );
 			}
 
@@ -166,106 +187,171 @@ public class PagerankBlockPrep extends Configured implements Tool {
 
 			value_al.clear();
 
-			if( out_prefix != null )
-				output.collect(key, new Text(out_prefix + out_value));
-			else
-				output.collect(key, new Text(out_value));
-		}
+				context.write(key, new Text(out_value));
     }
+  }
 
-    //////////////////////////////////////////////////////////////////////
-    // command line interface
-    //////////////////////////////////////////////////////////////////////
-    protected Path edge_path = null;
-	protected Path output_path = null;
-	protected int number_nodes = 0;
-	protected int block_size = 1;
-	protected int nreducer = 1;
-	protected String output_prefix;
-	protected int makesym = 0;
+  //////////////////////////////////////////////////////////////////////
+  // command line interface
+  //////////////////////////////////////////////////////////////////////
+  protected Path edgePath = null;
+  protected Path blkEdgePath = null;
+  protected Path blkNodePath = null;
+  protected Path tmpPath = null;
+  protected Configuration conf = null;
 
-    // Main entry point.
-    public static void main (final String[] args) throws Exception
-    {
-		final int result = ToolRunner.run(new Configuration(), new MatvecPrep(), args);
+  // Main entry point.
+  public static void main (final String[] args) throws Exception
+  {
+    final int result = ToolRunner.run(new Configuration(), 
+                                      new PagerankBlockPrep(), args);
 
-		System.exit(result);
-    }
+    System.exit(result);
+  }
 
-    // Print the command-line usage text.
-    protected static int printUsage ()
-    {
-		System.out.println("MatvecPrep <edge_path> <outputedge_path> <# of row> <block width> <# of reducer> <out_prefix or null> <makesym or nosym>");
+  // Print the command-line usage text.
+  protected static int printUsage ()
+  {
+    System.out.println("PagerankBlockPrep <edgePath> <blkEdgePath> <blkNodePath>");
 
-		ToolRunner.printGenericCommandUsage(System.out);
+    ToolRunner.printGenericCommandUsage(System.out);
 
-		return -1;
-    }
+    return -1;
+  }
 
-	// submit the map/reduce job.
-    public int run (final String[] args) throws Exception
-    {
-		if( args.length != 7 ) {
+  public void setPaths(String edge, String blkEdge, String blkNode) {
+		edgePath = new Path(edge);
+		blkEdgePath = new Path(blkEdge);
+    blkNodePath = new Path(blkNode);
+  }
+
+  // submit the map/reduce job.
+  public int run (final String[] args) throws Exception {
+		if( args.length != 3 ) {
 			return printUsage();
 		}
 
-		edge_path = new Path(args[0]);
-		output_path = new Path(args[1]);				
-		number_nodes = Integer.parseInt(args[2]);	// number of row of matrix
-		block_size = Integer.parseInt(args[3]);
-		nreducer = Integer.parseInt(args[4]);
-
-		if( args[5].compareTo("null") == 0 )
-			output_prefix = "";
-		else
-			output_prefix = args[5];
-
-		if( args[6].compareTo("makesym") == 0 )
-			makesym = 1;
-		else
-			makesym = 0;
-
-		System.out.println("\n-----===[PEGASUS: A Peta-Scale Graph Mining System]===-----\n");
-		System.out.println("[PEGASUS] Converting the adjacency matrix to block format. Output_prefix = " + output_prefix + ", makesym = " + makesym + ", block width=" + block_size + "\n");
-
-		// run job
-		JobClient.runJob(configStage1(output_prefix));
-
-		System.out.println("\n[PEGASUS] Conversion finished.");
-		System.out.println("[PEGASUS] Block adjacency matrix is saved in the HDFS " + args[1] + "\n");
-
+    setPaths(args[0], args[1], args[2]);
+    blockEdges();
+    initNodes();
 
 		return 0;
+  }
+
+  private void checkValidity() {
+    int blockWidth = conf.getInt("pagerank.block.width", -1);
+    if (blockWidth == -1) 
+      throw new IllegalArgumentException("block width not set");
+    int numNodes = conf.getInt("pagerank.num.nodes", -1);
+    if (numNodes == -1) 
+      throw new IllegalArgumentException("number of nodes not set");
+  }
+
+  public int blockEdges() throws Exception {
+    conf = getConf();
+    conf.addResource("pagerank-conf.xml");
+    checkValidity();
+
+    FileSystem fs = FileSystem.get(conf);
+    tmpPath = new Path(edgePath.getParent(), "tmp");
+
+    fs.delete(blkEdgePath, true);
+    fs.delete(tmpPath, true);
+
+    waitForJobFinish(configStage1());
+    waitForJobFinish(configStage2());
+
+    fs.delete(tmpPath, true);
+
+    return 1;
+  }
+
+  public int initNodes() throws Exception {
+    conf = getConf();
+    conf.addResource("pagerank-conf.xml");
+    checkValidity();
+
+    FileSystem fs = FileSystem.get(conf);
+    fs.delete(blkNodePath, true);
+
+    int numNodes = conf.getInt("pagerank.num.nodes", 1);
+    int blockWidth = conf.getInt("pagerank.block.width", 1);
+    String localPath = "/tmp/initialNodeRank";
+    FileOutputStream file = new FileOutputStream(localPath);
+    DataOutputStream out = new DataOutputStream(file);
+    BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out));
+    System.out.println("generating initial rank vector");
+    int mileStone = numNodes / blockWidth / 100;
+    mileStone ++;
+    int nextStop = 0;
+    for (int i = 0; i < numNodes; i += blockWidth) {
+      StringBuilder sb = new StringBuilder();
+      int blockId = i / blockWidth;
+      sb.append("" + blockId + "\t");
+      for (int j = 0; j < blockWidth; ++j) {
+        boolean finish = false;
+        if ((j == blockWidth - 1) ||
+            (i + j == numNodes - 1)) {
+          finish = true;
+        }
+        if (finish == true) {
+          sb.append("" + j + " " + 1 / (float)numNodes);
+          break;
+        }
+        else {
+          sb.append("" + j + " " + 1 / (float)numNodes + " ");
+        }
+
+      }
+      writer.write(sb.toString());
+      writer.newLine();
+      if (i > nextStop) {
+        System.out.print(".");
+        nextStop += mileStone;
+      }
     }
+    writer.close();
+    System.out.print("\n");
+    //copy to hdfs
+    fs.copyFromLocalFile(false, true, new Path(localPath), 
+                         blkNodePath);
+    return 1;
+  }
 
-	// Configure pass1
-    protected JobConf configStage1 (String out_prefix) throws Exception
-    {
-		final JobConf conf = new JobConf(getConf(), MatvecPrep.class);
-		conf.set("block_size", "" + block_size);
-		conf.set("matrix_row", "" + number_nodes);
-		conf.set("out_prefix", "" + out_prefix);
-		conf.set("makesym", "" + makesym);
-		conf.setJobName("MatvecPrep_Stage1");
-		
-		conf.setMapperClass(MapStage1.class);        
-		conf.setReducerClass(RedStage1.class);
-
-		FileSystem fs = FileSystem.get(getConf());
-		fs.delete(output_path, true);
-
-		FileInputFormat.setInputPaths(conf, edge_path);  
-		FileOutputFormat.setOutputPath(conf, output_path);  
-
-		int num_reduce_tasks = nreducer;
-
-		conf.setNumReduceTasks( num_reduce_tasks );
-
-		conf.setOutputKeyClass(Text.class);
-		conf.setOutputValueClass(Text.class);
-		conf.setMapOutputValueClass(Text.class);
-
-		return conf;
+  private Job waitForJobFinish(Job job) throws Exception {
+    boolean succeeded = job.waitForCompletion(true);
+    if (!succeeded) {
+      throw new RuntimeException(job.toString());
     }
+    return job;
+  }
+
+  
+  private Job configStage1() throws Exception {
+    Job job = new Job(conf, "PagerankBlockPrep");
+    job.setJarByClass(PagerankBlockPrep.class);
+    job.setMapperClass(MapStage1.class);
+    job.setReducerClass(ReduceStage1.class);
+    job.setNumReduceTasks(conf.getInt("pagerank.num.reducers", 1));
+    job.setOutputKeyClass(Text.class);
+    job.setOutputValueClass(Text.class);
+    FileInputFormat.setInputPaths(job, edgePath);
+    FileOutputFormat.setOutputPath(job, tmpPath);
+    return job;
+  }
+  
+  private Job configStage2() throws Exception {
+    Job job = new Job(conf, "PagerankBlockPrepStage2");
+    job.setJarByClass(PagerankBlockPrep.class);
+    job.setMapperClass(MapStage2.class);
+    job.setReducerClass(ReduceStage2.class);
+    job.setNumReduceTasks(conf.getInt("pagerank.num.reducers", 1));
+    job.setOutputKeyClass(Text.class);
+    job.setOutputValueClass(Text.class);
+    FileInputFormat.setInputPaths(job, tmpPath);
+    FileOutputFormat.setOutputPath(job, blkEdgePath);
+    return job;
+  }
+
 }
 
