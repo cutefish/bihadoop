@@ -1,3 +1,5 @@
+package bench.pagerank;
+
 import java.io.*;
 import java.net.URI;
 import java.nio.ByteBuffer;

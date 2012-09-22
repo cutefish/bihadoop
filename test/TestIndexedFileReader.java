@@ -17,15 +17,13 @@ import org.apache.hadoop.map2.IndexedFileReader;
 public class TestIndexedFileReader {
   public static void main(String[] args) {
     try {
-      if (args.length < 1) {
-        System.out.println("usage: <file>");
+      if (args.length != 2) {
+        System.out.println("usage: <fsUri> <file>");
         System.exit(-1);
       }
+      URI fsUri = new URI(args[0]);
       Configuration conf = new Configuration();
-      conf.addResource("hdfs-default.xml");
-      conf.addResource("hdfs-site.xml");
-      System.out.format("fs.default.name:%s\n", conf.get("fs.default.name"));
-      FileSystem fs = FileSystem.get(conf);
+      FileSystem fs = FileSystem.get(fsUri, conf);
 
 //      Path testPath = new Path("/test");
 //      FSDataOutputStream out = fs.create(testPath, false);
@@ -38,7 +36,7 @@ public class TestIndexedFileReader {
 //      in.close();
 
 
-      Path filePath = new Path(args[0]);
+      Path filePath = new Path(args[1]);
       IndexedFileReader reader = new IndexedFileReader();
       reader.readIndexedFile(fs, filePath);
       List<String> idxList = reader.getIndexList();
