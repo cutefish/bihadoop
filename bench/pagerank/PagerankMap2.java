@@ -2,8 +2,10 @@ package bench.pagerank;
 
 import java.io.BufferedReader;
 import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.InputStreamReader;
 import java.io.IOException;
 import java.io.FileInputStream;
@@ -22,6 +24,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileUtil;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.BytesWritable;
@@ -122,7 +125,7 @@ public class PagerankMap2 extends Configured implements Tool {
       int nodeBlockRowId = Integer.parseInt(indices[nodeIdx].split("\t")[1]);
 
       FSDataInputStream in;
-      BufferedReader reader;
+      DataInputStream dataIn;
 
       Configuration conf = context.getConfiguration();
       long edgeVersionId = conf.getLong("pagerank.edge.versionId", 0);
@@ -148,31 +151,19 @@ public class PagerankMap2 extends Configured implements Tool {
         in = fs.open(nodeSgmt.getPath());
       }
       in.seek(nodeSgmt.getOffset());
-      reader = new BufferedReader(new InputStreamReader(in));
+      dataIn = new DataInputStream(new BufferedInputStream(in));
+
       int bytesRead = 0;
       int count = 0;
       while(bytesRead < nodeSgmt.getLength()) {
-        String lineText = reader.readLine();
-        if (lineText == null) break;
-        bytesRead += lineText.length() + 1;
-        //ignore comment and blank line
-        if (lineText.startsWith("#")) continue;
-        if (lineText.equals("")) continue;
-
-        String[] line = lineText.split("\t");
-        //ignore ill-formed lines
-        try {
-          int rowId = Integer.parseInt(line[0]);
-          int rowIdInBlock = rowId / (numNodes / blockSize);
-          double rank = Double.parseDouble(line[1]);
-          //prevRank.put(rowId, rank);
-          prevRank[rowIdInBlock] = rank;
-          rowIdArray[rowIdInBlock] = rowId;
-          count ++;
-        }
-        catch(Exception e) {
-          System.out.println("" + e + ", on line: " + lineText);
-        }
+        int rowId = dataIn.readInt();
+        int rowIdInBlock = rowId / (numNodes / blockSize);
+        double rank = dataIn.readDouble();
+        //prevRank.put(rowId, rank);
+        prevRank[rowIdInBlock] = rank;
+        rowIdArray[rowIdInBlock] = rowId;
+        bytesRead += (4 + 8);
+        count ++;
       }
       //we add a header ahead of buffer to distinguish between previous and
       //current value
@@ -207,8 +198,7 @@ public class PagerankMap2 extends Configured implements Tool {
       }
       in.seek(edgeSgmt.getOffset());
 
-      DataInputStream dataIn = new DataInputStream(
-          new BufferedInputStream(in));
+      dataIn = new DataInputStream(new BufferedInputStream(in));
 
       Arrays.fill(rowIdArray, -1);
       double[] rankArray = new double[arraySize];
@@ -275,7 +265,7 @@ public class PagerankMap2 extends Configured implements Tool {
    * value: rowId + "\t" + rank; ...
    */
   public static class RedStage1
-          extends Reducer<Text, BytesWritable, Text, Text> {
+          extends Reducer<Text, BytesWritable, Text, byte[]> {
 
     float alpha = 0;
     int numNodes = 0;
@@ -353,7 +343,7 @@ public class PagerankMap2 extends Configured implements Tool {
 
       System.out.println("max: " + max);
 
-      StringBuilder sb = new StringBuilder();
+      ByteBuffer bbuf = ByteBuffer.allocate((max + 1) * (4 + 8));
       int total = currRank.length;
       int mileStore = total / 100;
       int count = 0;
@@ -371,26 +361,27 @@ public class PagerankMap2 extends Configured implements Tool {
             reportedChange = true;
           }
         }
-        sb.append("" + rowIdArray[i] + "\t" + elemCurrRank + "\n");
+        bbuf.putInt(rowIdArray[i]);
+        bbuf.putDouble(elemCurrRank);
         if ((mileStore != 0) && (count % mileStore == 0)) {
           context.progress();
         }
       }
 
-      context.write(new Text("node\t" + key), 
-                    new Text(sb.toString()));
+      context.write(new Text("node\t" + key), bbuf.array());
     }
   }
+
 
   /****************************************************************************
    * command line
    ***************************************************************************/
 
-  protected Path inPath = null;
   protected Path edgePath = null;
-  protected Path outPath = null;
+  protected Path blkEdgePath = null;
   protected Path initNodePath = null;
   protected Path nodePath = null;
+  protected Path outPath = null;
   protected Configuration conf = null;
 
   public static void main(final String[] args) {
@@ -420,25 +411,28 @@ public class PagerankMap2 extends Configured implements Tool {
     conf.addResource("pagerank-conf.xml");
     checkValidity();
 
-    inPath = new Path(args[0]);
+    edgePath = new Path(args[0]);
     outPath = new Path(args[1]);
     FileSystem fs = FileSystem.get(conf);
     long start, end;
 
-    edgePath = new Path(inPath.getParent(), "blkedge");
-    initNodePath = new Path(inPath.getParent(), "initialNodeRank");
-    nodePath = new Path(inPath.getParent(), "blknode");
+    blkEdgePath = new Path(edgePath.getParent(), "blkedge");
+    initNodePath = new Path(edgePath.getParent(), "initialNodeRank");
+    nodePath = new Path(edgePath.getParent(), "blknode");
+
+    PagerankMap2Prep prepare = new PagerankMap2Prep();
+    prepare.setPaths(edgePath.toString(), blkEdgePath.toString(),
+                     initNodePath.toString());
 
     if (conf.getBoolean("pagerank.initialize", true)) {
       fs.delete(initNodePath, true);
-      fs.delete(edgePath, true);
+      fs.delete(blkEdgePath, true);
       System.out.println("Generating initial node");
-      PagerankMap2Prep.initNode(initNodePath);
+      prepare.initNodes();
       System.out.println("done");
-      String[] prepArgs = {inPath.toString(), edgePath.toString()};
       System.out.println("Tranforming edges");
       start = System.currentTimeMillis();
-      PagerankMap2Prep.main(prepArgs);
+      prepare.blockEdges();
       end = System.currentTimeMillis();
       System.out.println("===map2 experiment===<time>[PagerankMap2Prep]: " + 
                        (end - start) + " ms");
@@ -446,14 +440,13 @@ public class PagerankMap2 extends Configured implements Tool {
     else {
       if (!fs.exists(initNodePath)) {
         System.out.println("Generating initial node");
-        PagerankMap2Prep.initNode(initNodePath);
+        prepare.initNodes();
         System.out.println("done");
       }
-      if (!fs.exists(edgePath)) {
-        String[] prepArgs = {inPath.toString(), edgePath.toString()};
+      if (!fs.exists(blkEdgePath)) {
         System.out.println("Tranforming edges");
         start = System.currentTimeMillis();
-        PagerankMap2Prep.main(prepArgs);
+        prepare.blockEdges();
         end = System.currentTimeMillis();
         System.out.println("===map2 experiment===<time>[PagerankMap2Prep]: " + 
                            (end - start) + " ms");
@@ -507,6 +500,9 @@ public class PagerankMap2 extends Configured implements Tool {
     if (conf.getBoolean("pagerank.keep.intermediate", false)) {
       FileUtil.copy(fs, outPath, fs, nodePath, false, true, conf);
     }
+    if (conf.getBoolean("pagerank.map2.toplaintxt", false)) {
+      convertToPlainText();
+    }
     return 1;
   }
 
@@ -537,10 +533,10 @@ public class PagerankMap2 extends Configured implements Tool {
     job.setMapOutputKeyClass(Text.class);
     job.setMapOutputValueClass(BytesWritable.class);
     job.setOutputKeyClass(Text.class);
-    job.setOutputValueClass(Text.class);
+    job.setOutputValueClass(byte[].class);
     job.setInputFormatClass(Map2InputFormat.class);
     Map2InputFormat.setIndexFilter(job, PagerankMap2Filter.class);
-    Map2InputFormat.setInputPaths(job, edgePath, initNodePath);
+    Map2InputFormat.setInputPaths(job, blkEdgePath, initNodePath);
     job.setOutputFormatClass(PagerankMap2OutputFormat.class);
     FileOutputFormat.setOutputPath(job, outPath);
     return job;
@@ -556,10 +552,10 @@ public class PagerankMap2 extends Configured implements Tool {
     job.setMapOutputKeyClass(Text.class);
     job.setMapOutputValueClass(BytesWritable.class);
     job.setOutputKeyClass(Text.class);
-    job.setOutputValueClass(Text.class);
+    job.setOutputValueClass(byte[].class);
     job.setInputFormatClass(Map2InputFormat.class);
     Map2InputFormat.setIndexFilter(job, PagerankMap2Filter.class);
-    Map2InputFormat.setInputPaths(job, edgePath, nodePath);
+    Map2InputFormat.setInputPaths(job, blkEdgePath, nodePath);
     job.setOutputFormatClass(PagerankMap2OutputFormat.class);
     FileOutputFormat.setOutputPath(job, outPath);
     return job;
@@ -593,7 +589,7 @@ public class PagerankMap2 extends Configured implements Tool {
   }
 
   public static class PagerankMap2OutputFormat<K, V>
-        extends IndexedTextOutputFormat<K, V> {
+        extends IndexedByteArrayOutputFormat<K, V> {
     @Override
     protected <K, V> String generateIndexForKeyValue(
         K key, V value, String path) {
@@ -601,4 +597,33 @@ public class PagerankMap2 extends Configured implements Tool {
     }
   }
 
+  public void convertToPlainText() throws Exception {
+    Configuration conf = getConf();
+    FileSystem fs = FileSystem.get(conf);
+    FileStatus[] files = fs.listStatus(outPath);
+    Path plainTxtPath = new Path(outPath, "plaintxt");
+    fs.delete(plainTxtPath);
+    DataOutputStream out = new DataOutputStream(
+        new BufferedOutputStream(fs.create(plainTxtPath)));
+    for (FileStatus file : files) {
+      Path path = file.getPath();
+      System.out.println("converting file " + path);
+      if (!path.toString().contains("part-r"))
+        continue;
+      if (path.toString().contains("map2idx"))
+        continue;
+      DataInputStream dataIn = new DataInputStream(
+          new BufferedInputStream(fs.open(path)));
+      try {
+        while(true) {
+          int rowId = dataIn.readInt();
+          double rank = dataIn.readDouble();
+          out.write(("" + rowId + "\t" + rank + "\n").getBytes());
+        }
+      }
+      catch (EOFException eof) {
+      }
+    }
+    out.close();
+  }
 }

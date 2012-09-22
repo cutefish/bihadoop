@@ -62,4 +62,8 @@
         <name>pagerank.useCache</name>
         <value>false</value>
     </property>
+    <property>
+        <name>pagerank.map2.toplaintxt</name>
+        <value>false</value>
+    </property>
 </configuration>

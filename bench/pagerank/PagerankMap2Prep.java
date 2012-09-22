@@ -1,8 +1,8 @@
 package bench.pagerank;
 
-import java.io.BufferedWriter;
-import java.io.FileOutputStream;
+import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.nio.ByteBuffer;
@@ -194,9 +194,9 @@ public class PagerankMap2Prep extends Configured implements Tool {
    * command line
    ***************************************************************************/
 
-  protected Path inPath = null;
-  protected Path nodePath = null;
   protected Path edgePath = null;
+  protected Path blkEdgePath = null;
+  protected Path blkNodePath = null;
   protected Path tmpPath = null;
   protected Configuration conf = null;
 
@@ -215,12 +215,19 @@ public class PagerankMap2Prep extends Configured implements Tool {
   }
 
   protected static int printUsage() {
-    System.out.println("PagerankMap2Prep <edgePath> <blkedgePath>");
+    System.out.println("PagerankMap2Prep " + 
+                       "<edgePath> <blkedgePath> <initNodePath>");
     return -1;
   }
 
+  public void setPaths(String edge, String blkEdge, String blkNode) {
+		edgePath = new Path(edge);
+		blkEdgePath = new Path(blkEdge);
+    blkNodePath = new Path(blkNode);
+  }
+
   public int run(final String[] args) throws Exception {
-    if (args.length != 2) {
+    if (args.length != 3) {
       return printUsage();
     }
 
@@ -228,12 +235,25 @@ public class PagerankMap2Prep extends Configured implements Tool {
     conf.addResource("pagerank-conf.xml");
     checkValidity();
 
-    inPath = new Path(args[0]);
-    edgePath = new Path(args[1]);
-    tmpPath = new Path(inPath.getParent(), "tmp");
+    setPaths(args[0], args[1], args[2]);
+    blockEdges();
+    initNodes();
+
+    return 1;
+  }
+
+  public int blockEdges() throws Exception {
+    conf = getConf();
+    if (conf == null) {
+      conf = new Configuration();
+      setConf(conf);
+    }
+    conf.addResource("pagerank-conf.xml");
+    checkValidity();
 
     FileSystem fs = FileSystem.get(conf);
-    fs.delete(edgePath, true);
+    tmpPath = new Path(edgePath.getParent(), "tmp");
+    fs.delete(blkEdgePath, true);
     fs.delete(tmpPath, true);
 
     waitForJobFinish(configStage1());
@@ -244,15 +264,64 @@ public class PagerankMap2Prep extends Configured implements Tool {
     return 1;
   }
 
-  public static void initNode(final Path arg) throws Exception {
+  public void initNodes() throws Exception {
     Configuration conf = new Configuration();
+    if (conf == null) {
+      conf = new Configuration();
+      setConf(conf);
+    }
     conf.addResource("pagerank-conf.xml");
     checkValidity(conf);
 
-    Path nodePath = arg;
     FileSystem fs = FileSystem.get(conf);
-    fs.delete(nodePath, true);
-    genInitNodeRanks(conf, nodePath);
+    fs.delete(blkNodePath, true);
+
+    int blockSize = conf.getInt("pagerank.block.size", 1);
+    int numNodes = conf.getInt("pagerank.num.nodes", 1);
+    Path[] localPath = {
+      new Path("/tmp/initialNodeRank"), 
+      new Path("/tmp/initialNodeRank.map2idx")
+    };
+
+    BufferedOutputStream out = new BufferedOutputStream(
+        new FileOutputStream(localPath[0].toString()));
+    DataOutputStream idxOut = new DataOutputStream(
+        new FileOutputStream(localPath[1].toString()));
+
+    int prevOff = 0;
+    int currOff = 0;
+
+    int numBlocks = numNodes / blockSize;
+    int left = numNodes - numBlocks * (numNodes / numBlocks);
+    for (int i = 0; i < numBlocks; ++i) {
+      String blockId = "node" + "\t" + i;
+      int actualBlockSize = numNodes / numBlocks + ((i < left) ? 1 : 0);
+      int numBytes = actualBlockSize * (4 + 8);
+      //allocate one int and one double for each element
+      ByteBuffer bbuf = ByteBuffer.allocate(numBytes);
+      for (int j = i; j < numNodes; j += numBlocks) {
+        bbuf.putInt(j);
+        bbuf.putDouble(1.0 / numNodes);
+      }
+      out.write(bbuf.array());
+      currOff += numBytes;
+      idxOut.write(IndexingConstants.IDX_START);
+      Text.writeString(idxOut, blockId);
+      idxOut.write(IndexingConstants.SEG_START);
+      idxOut.writeLong(prevOff);
+      idxOut.writeLong(currOff - prevOff);
+      idxOut.write(IndexingConstants.IDX_END);
+      prevOff = currOff;
+      System.out.print(".");
+    }
+    out.close();
+    idxOut.close();
+    System.out.println("\n");
+
+    //copy to hdfs
+    fs = FileSystem.get(conf);
+    fs.mkdirs(blkNodePath);
+    fs.copyFromLocalFile(false, true, localPath, blkNodePath);
   }
 
     
@@ -290,7 +359,7 @@ public class PagerankMap2Prep extends Configured implements Tool {
     job.setNumReduceTasks(conf.getInt("pagerank.num.reducers", 1));
     job.setOutputKeyClass(Text.class);
     job.setOutputValueClass(Text.class);
-    FileInputFormat.setInputPaths(job, inPath);
+    FileInputFormat.setInputPaths(job, edgePath);
     FileOutputFormat.setOutputPath(job, tmpPath);
     return job;
   }
@@ -307,7 +376,7 @@ public class PagerankMap2Prep extends Configured implements Tool {
     job.setOutputValueClass(byte[].class);
     job.setOutputFormatClass(MatBlockOutputFormat.class);
     FileInputFormat.setInputPaths(job, tmpPath);
-    FileOutputFormat.setOutputPath(job, edgePath);
+    FileOutputFormat.setOutputPath(job, blkEdgePath);
     return job;
   }
 
@@ -320,68 +389,68 @@ public class PagerankMap2Prep extends Configured implements Tool {
     }
   }
 
-  private static void genInitNodeRanks(Configuration conf,
-                                       Path outPath) throws Exception {
-    int blockSize = conf.getInt("pagerank.block.size", 1);
-    int numNodes = conf.getInt("pagerank.num.nodes", 1);
-    Path[] localPath = {
-      new Path("/tmp/initialNodeRank"), 
-      new Path("/tmp/initialNodeRank.map2idx")
-    };
-    FileOutputStream file = new FileOutputStream(localPath[0].toString());
-    DataOutputStream out = new DataOutputStream(file);
-    BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out));
-    FileOutputStream idxFile = new FileOutputStream(localPath[1].toString());
-    DataOutputStream idxOut = new DataOutputStream(idxFile);
-    int prevOff = 0;
-    int currOff = 0;
-    System.out.println("generating initial rank vector");
-   // for (int i = 0; i < numNodes; i += blockSize) {
-   //   //in each block write a block and an index
-   //   int max = i + blockSize;
-   //   String blockId = "node" + "\t" + i / blockSize;
-   //   StringBuilder sb = new StringBuilder();
-   //   for (int j = i; j < max; ++j) {
-   //     sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");
-   //   }
-   //   out.writeBytes(sb.toString());
-   //   currOff += sb.toString().length();
-   //   idxOut.write(IndexingConstants.IDX_START);
-   //   Text.writeString(idxOut, blockId);
-   //   idxOut.write(IndexingConstants.SEG_START);
-   //   idxOut.writeLong(prevOff);
-   //   idxOut.writeLong(currOff - prevOff);
-   //   idxOut.write(IndexingConstants.IDX_END);
-   //   prevOff = currOff;
-   //   System.out.print(".");
-   // }
-   // System.out.print("\n");
+  //private static void genInitNodeRanks(Configuration conf,
+  //                                     Path outPath) throws Exception {
+  //  int blockSize = conf.getInt("pagerank.block.size", 1);
+  //  int numNodes = conf.getInt("pagerank.num.nodes", 1);
+  //  Path[] localPath = {
+  //    new Path("/tmp/initialNodeRank"), 
+  //    new Path("/tmp/initialNodeRank.map2idx")
+  //  };
+  //  FileOutputStream file = new FileOutputStream(localPath[0].toString());
+  //  DataOutputStream out = new DataOutputStream(file);
+  //  BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out));
+  //  FileOutputStream idxFile = new FileOutputStream(localPath[1].toString());
+  //  DataOutputStream idxOut = new DataOutputStream(idxFile);
+  //  int prevOff = 0;
+  //  int currOff = 0;
+  //  System.out.println("generating initial rank vector");
+  // // for (int i = 0; i < numNodes; i += blockSize) {
+  // //   //in each block write a block and an index
+  // //   int max = i + blockSize;
+  // //   String blockId = "node" + "\t" + i / blockSize;
+  // //   StringBuilder sb = new StringBuilder();
+  // //   for (int j = i; j < max; ++j) {
+  // //     sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");
+  // //   }
+  // //   out.writeBytes(sb.toString());
+  // //   currOff += sb.toString().length();
+  // //   idxOut.write(IndexingConstants.IDX_START);
+  // //   Text.writeString(idxOut, blockId);
+  // //   idxOut.write(IndexingConstants.SEG_START);
+  // //   idxOut.writeLong(prevOff);
+  // //   idxOut.writeLong(currOff - prevOff);
+  // //   idxOut.write(IndexingConstants.IDX_END);
+  // //   prevOff = currOff;
+  // //   System.out.print(".");
+  // // }
+  // // System.out.print("\n");
 
-    for (int i = 0; i < numNodes / blockSize; ++i) {
-      String blockId = "node" + "\t" + i;
-      StringBuilder sb = new StringBuilder();
-      for (int j = i; j < numNodes; j += numNodes / blockSize) {
-        sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");
-      }
-      writer.write(sb.toString());
-      currOff += sb.toString().length();
-      idxOut.write(IndexingConstants.IDX_START);
-      Text.writeString(idxOut, blockId);
-      idxOut.write(IndexingConstants.SEG_START);
-      idxOut.writeLong(prevOff);
-      idxOut.writeLong(currOff - prevOff);
-      idxOut.write(IndexingConstants.IDX_END);
-      prevOff = currOff;
-      System.out.print(".");
-    }
-    System.out.print("\n");
-    writer.flush();
-    out.close();
-    idxOut.close();
+  //  for (int i = 0; i < numNodes / blockSize; ++i) {
+  //    String blockId = "node" + "\t" + i;
+  //    StringBuilder sb = new StringBuilder();
+  //    for (int j = i; j < numNodes; j += numNodes / blockSize) {
+  //      sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");
+  //    }
+  //    writer.write(sb.toString());
+  //    currOff += sb.toString().length();
+  //    idxOut.write(IndexingConstants.IDX_START);
+  //    Text.writeString(idxOut, blockId);
+  //    idxOut.write(IndexingConstants.SEG_START);
+  //    idxOut.writeLong(prevOff);
+  //    idxOut.writeLong(currOff - prevOff);
+  //    idxOut.write(IndexingConstants.IDX_END);
+  //    prevOff = currOff;
+  //    System.out.print(".");
+  //  }
+  //  System.out.print("\n");
+  //  writer.flush();
+  //  out.close();
+  //  idxOut.close();
 
-    //copy to hdfs
-    FileSystem fs = FileSystem.get(conf);
-    fs.mkdirs(outPath);
-    fs.copyFromLocalFile(false, true, localPath, outPath);
-  }
+  //  //copy to hdfs
+  //  FileSystem fs = FileSystem.get(conf);
+  //  fs.mkdirs(outPath);
+  //  fs.copyFromLocalFile(false, true, localPath, outPath);
+  //}
 }

@@ -342,10 +342,15 @@ public class MapTaskPacker {
     LOG.debug("Generating a last level pack");
     //select from the group with least local leftSize
     //select from the largest join set.
-    Segments cache = new Segments(staticCache);
-    cache.add(dynamicCache);
-    List<CoverInfo> bestGroup = chooseGroup(cache, cacheSize);
+    List<CoverInfo> bestGroup = null;
+    if (dynamicCache.size() != 0) {
+      bestGroup = chooseGroup(dynamicCache, cacheSize, false);
+    }
+    if (bestGroup == null) {
+      bestGroup = chooseGroup(staticCache, cacheSize, true);
+    }
     if (bestGroup == null) return null;
+    LOG.debug("Best Group size: " + bestGroup.size());
     Set<Segment> largestSet = getLargestSet(bestGroup, cacheSize);
     if (largestSet == null) return null;
 
@@ -432,7 +437,7 @@ public class MapTaskPacker {
         //at least one join segment is chosen
         if (!chosenSegments.contains(coverSeg)) {
           chosenSegments.add(coverSeg);
-          sizeLeft -= coverSeg.getLength();
+          sizeLeft -= staticInfo.leftSize;
         }
       }
 
@@ -450,7 +455,8 @@ public class MapTaskPacker {
    * 
    * Find the group with most segments within the required size.
    */
-  private List<CoverInfo> chooseGroup(Segments cache, long size) {
+  private List<CoverInfo> chooseGroup(Segments cache, 
+                                      long size, boolean chooseAny) {
     if (groups == null || groups.isEmpty()) return null;
 
     List<List<CoverInfo>> allCoverInfo = new ArrayList<List<CoverInfo>>();
@@ -462,29 +468,42 @@ public class MapTaskPacker {
     }
 
     if (allCoverInfo.isEmpty()) {
-      //this means there is no cache for any segment
-      //just pick one group and construct the info.
-      List<Segment> group = groups.get(0);
-      List<CoverInfo> info = new ArrayList<CoverInfo>();
-      for (Segment seg : group) {
-        info.add(new CoverInfo(seg.getLength(), seg));
+      if (chooseAny) {
+        //this means there is no cache for any segment
+        //just pick one group and construct the info.
+        List<Segment> group = groups.get(0);
+        List<CoverInfo> info = new ArrayList<CoverInfo>();
+        for (Segment seg : group) {
+          info.add(new CoverInfo(seg.getLength(), seg));
+        }
+        return info;
       }
-      return info;
+      else {
+        return null;
+      }
     }
 
+    long minSize = -1;
     int maxNum = 0;
     List<CoverInfo> optGroup = null;
     for (List<CoverInfo> groupInfo : allCoverInfo) {
+      long sum = 0;
       int num = 0;
-      long left = size;
       for (CoverInfo info : groupInfo) {
-        left -= info.leftSize;
-        num ++;
-        if (left < 0) break;
+        sum += info.leftSize;
+        if (info.leftSize == 0) {
+          num ++;
+        }
       }
-      if (num > maxNum) {
-        maxNum = num;
-        optGroup = groupInfo;
+      //if we have a smaller left size
+      if ((sum <= minSize) || (minSize == -1)) {
+        // and our zero left size number is larger
+        // this is to face the fact that pairs are unordered.
+        if (num >= maxNum) {
+          minSize = sum;
+          optGroup = groupInfo;
+          maxNum = num;
+        }
       }
     }
 

@@ -240,16 +240,19 @@ public class PagerankBandwidth extends Configured implements Tool {
     initNodePath = new Path(inPath.getParent(), "initialNodeRank");
     nodePath = new Path(inPath.getParent(), "blknode");
 
+    PagerankMap2Prep prepare = new PagerankMap2Prep();
+    prepare.setPaths(inPath.toString(), edgePath.toString(),
+                     initNodePath.toString());
+
     if (conf.getBoolean("pagerank.initialize", true)) {
       fs.delete(initNodePath, true);
       fs.delete(edgePath, true);
       System.out.println("Generating initial node");
-      PagerankMap2Prep.initNode(initNodePath);
+      prepare.initNodes();
       System.out.println("done");
-      String[] prepArgs = {inPath.toString(), edgePath.toString()};
       System.out.println("Tranforming edges");
       start = System.currentTimeMillis();
-      PagerankMap2Prep.main(prepArgs);
+      prepare.blockEdges();
       end = System.currentTimeMillis();
       System.out.println("===map2 experiment===<time>[PagerankMap2Prep]: " + 
                        (end - start) + " ms");
@@ -257,14 +260,13 @@ public class PagerankBandwidth extends Configured implements Tool {
     else {
       if (!fs.exists(initNodePath)) {
         System.out.println("Generating initial node");
-        PagerankMap2Prep.initNode(initNodePath);
+        prepare.initNodes();
         System.out.println("done");
       }
       if (!fs.exists(edgePath)) {
-        String[] prepArgs = {inPath.toString(), edgePath.toString()};
         System.out.println("Tranforming edges");
         start = System.currentTimeMillis();
-        PagerankMap2Prep.main(prepArgs);
+        prepare.blockEdges();
         end = System.currentTimeMillis();
         System.out.println("===map2 experiment===<time>[PagerankMap2Prep]: " + 
                            (end - start) + " ms");

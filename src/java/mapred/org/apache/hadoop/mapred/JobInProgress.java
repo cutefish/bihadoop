@@ -2558,7 +2558,8 @@ public class JobInProgress {
       LOG.error("Invalid index, something wrong with packer");
       return null;
     }
-    LOG.info("Scheduling map2 split: [" + task[0] + ", " + task[1] + "]");
+    LOG.info("Scheduling map2 split: [" + task[0] + ", " + task[1] + "]" +
+             " on: " + host);
     return maps[index];
   }
   //end xyu40@gatech.edu

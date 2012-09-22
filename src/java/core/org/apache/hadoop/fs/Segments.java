@@ -48,6 +48,10 @@ public class Segments implements Writable {
     return thisList;
   }
 
+  public int size() {
+    return thisList.size();
+  }
+
   public boolean equals(Object obj) {
     if (this == obj) return true;
     if (obj != null && obj instanceof Segments) {

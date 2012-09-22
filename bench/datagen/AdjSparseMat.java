@@ -26,6 +26,7 @@ import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.net.URI;
 import java.util.Random;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -35,9 +36,10 @@ public class AdjSparseMat extends DataGenerator {
   int rowSize;
   int colSize;
   float sparseLevel;
+  URI fsUri;
   Path outPath;
 
-  private void genMatrix() throws IOException {
+  private void genMatrix() throws Exception {
     File local = new File("/tmp/edge");
     FileOutputStream file = new FileOutputStream(local);
     DataOutputStream out = new DataOutputStream(file);
@@ -56,7 +58,7 @@ public class AdjSparseMat extends DataGenerator {
         out.writeBytes(line);
       }
     }
-    FileSystem fs = FileSystem.get(conf);
+    FileSystem fs = FileSystem.get(fsUri, conf);
     fs.delete(outPath);
     fs.copyFromLocalFile(false, true, 
                          new Path(local.toString()), outPath);
@@ -64,18 +66,19 @@ public class AdjSparseMat extends DataGenerator {
 
   public void printUsage() {
     System.out.println("AdjSparseMat <rowSize> <colSize> " + 
-                       "<sparseLevel> <outPath>");
+                       "<sparseLevel> <fsUri> <outPath>");
   }
 
   public void parseArgs(String[] args) throws Exception {
-    if (args.length != 4) {
+    if (args.length != 5) {
       printUsage();
       throw new RuntimeException("invalid argument");
     }
     rowSize = Integer.parseInt(args[0]);
     colSize = Integer.parseInt(args[1]);
     sparseLevel = Float.parseFloat(args[2]);
-    outPath = new Path(args[3]);
+    fsUri = new URI(args[3]);
+    outPath = new Path(args[4]);
   }
 
   public void generate() throws Exception {
