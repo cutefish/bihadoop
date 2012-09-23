@@ -166,7 +166,7 @@ public class MapTaskPacker {
 
     long end = System.currentTimeMillis();
 
-    //LOG.debug(groupsToString());
+    LOG.debug(groupsToString());
 
     LOG.info("Number of Groups size: " + groups.size());
     LOG.info("Finished initializing for job in " + (end - start) + " ms.");

@@ -182,7 +182,8 @@ public class Segments implements Writable {
     if (thatStart < 0) thatStart = 0;
     if (thatEnd >= thatList.size()) thatEnd = thatList.size() - 1;
 
-    for (int i = thatStart; i <= thatEnd; ++i) {
+    //for (int i = thatStart; i <= thatEnd; ++i) {
+    for (int i = 0; i < thatList.size(); ++i) {
       CoverInfo result = cover(thisStart, thisEnd, thatList.get(i));
       ret.add(result);
     }
