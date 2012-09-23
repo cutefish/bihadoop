@@ -466,7 +466,8 @@ public class MapTaskPacker {
       List<CoverInfo> info = cache.cover(group);
       if (info != null) {
         LOG.debug("group: " + i + 
-                  " info[0] size: " + info.get(0).leftSize);
+                  " info[0]: " + info.get(0).segment.toString() + 
+                  " size: " + info.get(0).leftSize);
         allCoverInfo.add(info);
       }
     }
@@ -487,26 +488,35 @@ public class MapTaskPacker {
       }
     }
 
-    long minSize = -1;
     int maxNum = 0;
     List<CoverInfo> optGroup = null;
+    //first choose perfect cover
     for (List<CoverInfo> groupInfo : allCoverInfo) {
-      long sum = 0;
       int num = 0;
       for (CoverInfo info : groupInfo) {
-        sum += info.leftSize;
         if (info.leftSize == 0) {
           num ++;
         }
       }
-      //if we have a smaller left size
-      if ((sum <= minSize) || (minSize == -1)) {
-        // and our zero left size number is larger
-        // this is to face the fact that pairs are unordered.
-        if (num >= maxNum) {
-          minSize = sum;
+      //choose the group where the most zero occurs
+      if (num > maxNum) {
+        maxNum = num;
+        optGroup = groupInfo;
+      }
+    }
+
+    //no group has perfect cover, use size
+    if (optGroup == null) {
+      long minSize = -1;
+      for (List<CoverInfo> groupInfo : allCoverInfo) {
+        long reqiredSize = 0;
+        for (CoverInfo info : groupInfo) {
+          reqiredSize += info.leftSize;
+        }
+        //choose the group where covers the most
+        if ((reqiredSize < minSize) || (minSize == -1)) {
+          minSize = reqiredSize;
           optGroup = groupInfo;
-          maxNum = num;
         }
       }
     }
