@@ -170,21 +170,22 @@ public class Segments implements Writable {
     if (thisList.size() == 0) return null;
 
     //since both lists are sorted, we can limit the search range.
-    int idx;
-    idx = Collections.binarySearch(thisList, thatList.get(0));
-    int thisStart = (idx >= 0) ? idx : -(idx + 1) - 1;
-    idx = Collections.binarySearch(thisList, thatList.get(thatList.size() - 1));
-    int thisEnd = (idx >= 0) ? idx : -(idx + 1) + 1;
-    idx = Collections.binarySearch(thatList, thisList.get(0));
-    int thatStart = (idx >= 0) ? idx : -(idx + 1) - 1;
-    idx = Collections.binarySearch(thatList, thisList.get(thisList.size() - 1));
-    int thatEnd = (idx >= 0) ? idx : -(idx + 1) + 1;
-    if (thatStart < 0) thatStart = 0;
-    if (thatEnd >= thatList.size()) thatEnd = thatList.size() - 1;
+    //int idx;
+    //idx = Collections.binarySearch(thisList, thatList.get(0));
+    //int thisStart = (idx >= 0) ? idx : -(idx + 1) - 1;
+    //idx = Collections.binarySearch(thisList, thatList.get(thatList.size() - 1));
+    //int thisEnd = (idx >= 0) ? idx : -(idx + 1) + 1;
+    //idx = Collections.binarySearch(thatList, thisList.get(0));
+    //int thatStart = (idx >= 0) ? idx : -(idx + 1) - 1;
+    //idx = Collections.binarySearch(thatList, thisList.get(thisList.size() - 1));
+    //int thatEnd = (idx >= 0) ? idx : -(idx + 1) + 1;
+    //if (thatStart < 0) thatStart = 0;
+    //if (thatEnd >= thatList.size()) thatEnd = thatList.size() - 1;
 
     //for (int i = thatStart; i <= thatEnd; ++i) {
     for (int i = 0; i < thatList.size(); ++i) {
-      CoverInfo result = cover(thisStart, thisEnd, thatList.get(i));
+      //CoverInfo result = cover(thisStart, thisEnd, thatList.get(i));
+      CoverInfo result = cover(0, thisList.size(), thatList.get(i));
       ret.add(result);
     }
 

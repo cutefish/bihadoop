@@ -461,10 +461,14 @@ public class MapTaskPacker {
 
     List<List<CoverInfo>> allCoverInfo = new ArrayList<List<CoverInfo>>();
 
-    for (List<Segment> group : groups) {
+    for (int i = 0; i < groups.size(); ++i) {
+      List<Segment> group = groups.get(i);
       List<CoverInfo> info = cache.cover(group);
-      if (info != null)
+      if (info != null) {
+        LOG.debug("group: " + i + 
+                  " info[0] size: " + info.get(0).leftSize);
         allCoverInfo.add(info);
+      }
     }
 
     if (allCoverInfo.isEmpty()) {
