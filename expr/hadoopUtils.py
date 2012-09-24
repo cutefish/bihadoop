@@ -283,8 +283,8 @@ def cleanupAll(argv):
                    "%s "
                    '"rm -r /tmp/hadoop*; '
                    'rm -r /home/%s/tmp/*; '
-                   'rm -r /home/hadoop/logs/*" '
-                   %(userName, slave, userName))
+                   'rm -r /home/%s/hadoop/logs/*" '
+                   %(userName, slave, userName, userName))
         print command
         subprocess.call(command.split(' '));
 
