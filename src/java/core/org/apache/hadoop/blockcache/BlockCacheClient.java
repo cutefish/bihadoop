@@ -121,13 +121,11 @@ public class BlockCacheClient implements java.io.Closeable {
               (int)(blockEnd - pos) : len;
           switch (state) {
             case REPLICA:
-              LOG.debug("Read replica local");
               n = backupIn.read(buf, off, maxLength);
               pos += n;
               return n;
             case CACHE:
               //use try catch so that we can try again
-              LOG.debug("Read cache local");
               try {
                 n = localIn.read(buf, off, maxLength);
                 if (n < 0) 

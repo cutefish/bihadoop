@@ -98,7 +98,7 @@ public class MatMulMemMap2 {
       for (int i = 0; i < sizeB; ++i) {
         matrixBlockB[i] = dataIn.readDouble();
       }
-      dataIn.close();
+      in.close();
       end = System.currentTimeMillis();
       System.out.println("matrixB read time: " + (end - start) + " ms");
       System.out.println("matrixB read bandwidth: " + 
@@ -138,7 +138,7 @@ public class MatMulMemMap2 {
         end = System.currentTimeMillis();
         calcTime += end - start;
       }
-      dataIn.close();
+      in.close();
       System.out.println("matrixA read time: " + readTime + " ms");
       System.out.println("matrixA read bandwidth: " + 
                          sizeB * 8 / readTime / 1000 + " MBytes/s");
@@ -150,8 +150,8 @@ public class MatMulMemMap2 {
       String rowIdx = Aindices[2];
       String colIdx = Bindices[4];
 
-        context.write(new Text(rowIdx + "\t" + colIdx),
-                      new BytesWritable(outbuf.array()));
+      context.write(new Text(rowIdx + "\t" + colIdx),
+                    new BytesWritable(outbuf.array()));
     }
   }
 
@@ -270,16 +270,17 @@ public class MatMulMemMap2 {
 
   public static class MatMulMap2Filter implements Map2Filter {
     public boolean accept(String idx0, String idx1) {
-      String AIdx, BIdx;
-      if (idx0.contains("A")) {
-        AIdx = idx0; BIdx = idx1;
-      }
-      else {
-        BIdx = idx0; AIdx = idx1;
-      }
+      String AIdx = null, BIdx = null;
+      if (idx0.contains("A")) AIdx = idx0;
+      if (idx0.contains("B")) BIdx = idx0;
+      if (idx1.contains("A")) AIdx = idx1;
+      if (idx1.contains("B")) BIdx = idx1;
+
+      if ((AIdx == null) || (BIdx == null)) return false;
+
       String[] Aindices = AIdx.split("_");
       String[] Bindices = BIdx.split("_");
-      if (Aindices.length != 5 || Bindices.length != 2) return false;
+      if (Aindices.length != 5 || Bindices.length != 5) return false;
       try {
         int AColId = Integer.parseInt(Aindices[4]);
         int BRowId = Integer.parseInt(Bindices[2]);

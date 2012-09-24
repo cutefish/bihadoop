@@ -119,6 +119,7 @@ public class MatMulIOMap2 {
           for (int k = 0; k < numColsInBlock; ++k) {
             sum += dataBIn.readDouble() * rowA[k];
           }
+          context.setStatus("finished read row: " + j);
           outbuf.putDouble(sum);
         }
         end = System.currentTimeMillis();
@@ -263,16 +264,17 @@ public class MatMulIOMap2 {
 
   public static class MatMulMap2Filter implements Map2Filter {
     public boolean accept(String idx0, String idx1) {
-      String AIdx, BIdx;
-      if (idx0.contains("A")) {
-        AIdx = idx0; BIdx = idx1;
-      }
-      else {
-        BIdx = idx0; AIdx = idx1;
-      }
+      String AIdx = null, BIdx = null;
+      if (idx0.contains("A")) AIdx = idx0;
+      if (idx0.contains("B")) BIdx = idx0;
+      if (idx1.contains("A")) AIdx = idx1;
+      if (idx1.contains("B")) BIdx = idx1;
+
+      if ((AIdx == null) || (BIdx == null)) return false;
+
       String[] Aindices = AIdx.split("_");
       String[] Bindices = BIdx.split("_");
-      if (Aindices.length != 5 || Bindices.length != 2) return false;
+      if (Aindices.length != 5 || Bindices.length != 5) return false;
       try {
         int AColId = Integer.parseInt(Aindices[4]);
         int BRowId = Integer.parseInt(Bindices[2]);
