@@ -58,6 +58,8 @@ public class MatMulPrep {
 
     Random rand = new Random();
 
+    System.out.println("Generating matrices");
+
     //gen two matrix
     for (int i = 0; i < 2; ++i) {
       //foreach block

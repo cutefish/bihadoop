@@ -39,6 +39,7 @@ commandList = ["addConf",
                "cpConf",
                "quickSetup",
                "collectResult",
+               "cleanupAll",
               ]
 
 def printUsage():
@@ -59,6 +60,8 @@ def run(argv):
         quickSetup(argv[1:])
     elif (argv[0] == 'collectResult'):
         collectResult(argv[1:])
+    elif (argv[0] == 'cleanupAll'):
+        cleanupAll(argv[1:])
     else:
         printUsage()
 
@@ -264,6 +267,27 @@ def collectResult(argv):
         slaveFile = argv[3]
         logHome = argv[4]
         _collectResult(jobIdPrefix, jobIdRange, dstDir, slaveFile, logHome)
+
+"""
+clean up
+delete /tmp/hadoop*
+delete /home/ec2-user/tmp/*
+delete /home/hadoop/logs/*
+"""
+def cleanupAll(argv):
+    slaves = fileToList('/home/%s/hadoop/hadoop-1.0.3/conf/slaves' %userName)
+    for slave in slaves:
+        command = ("ssh -i /home/%s/pem/HadoopExpr.pem "
+                   "-o UserKnownHostsFile=/dev/null "
+                   "-o StrictHostKeyChecking=no "
+                   "%s "
+                   'rm -r /tmp/*;'
+                   'rm -r /home/%s/tmp/*;'
+                   'rm -r /home/%s/hadoop/logs/* '
+                   %(userName, slave, userName, userName))
+        print command
+        subprocess.call(command.split(' '));
+
 
 if __name__ == '__main__':
     run(sys.argv[1:])

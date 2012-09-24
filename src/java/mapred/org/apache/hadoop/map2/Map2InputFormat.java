@@ -235,9 +235,15 @@ public class Map2InputFormat
     return conf.getBoolean("mapred.map2.input.fileNameAsIndex", false);
   }
 
+<<<<<<< HEAD
   public void setFileNameAsIndex(Job job) {
     Configuration conf = job.getConfiguration();
     return conf.setBoolean("mapred.map2.input.fileNameAsIndex", true);
+=======
+  public static void setFileNameAsIndex(Job job) {
+    Configuration conf = job.getConfiguration();
+    conf.setBoolean("mapred.map2.input.fileNameAsIndex", true);
+>>>>>>> 36ab8f8f4a4e7e5eccda851c8bd53e44b8838682
   }
   
   public RecordReader<String[], TrackedSegments> createRecordReader(

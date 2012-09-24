@@ -174,7 +174,7 @@ public class PagerankMap2 extends Configured implements Tool {
       }
       in.close();
       end = System.currentTimeMillis();
-      System.out.println("Processed node in " + (end - start) + " ms");
+      System.out.println("Processed node " + bytesRead + " byte in " + (end - start) + " ms");
       System.out.println("Node processing bandwidth: " + bytesRead / (end - start) / 1000 + " MByte/s");
 
       context.setStatus("reading edge matrix: " + indices[edgeIdx] + 
@@ -238,7 +238,7 @@ public class PagerankMap2 extends Configured implements Tool {
                     new BytesWritable(bbuf.array()));
       in.close();
       end = System.currentTimeMillis();
-      System.out.println("Processed edge in " + (end - start) + " ms");
+      System.out.println("Processed edge " + bytesRead + " byte in " + (end - start) + " ms");
       System.out.println("Edge processing bandwidth: " + bytesRead / (end - start) / 1000 + " MByte/s");
     }
   }

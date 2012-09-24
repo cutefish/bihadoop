@@ -1,11 +1,13 @@
 package bench.pagerank;
 
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -158,35 +160,36 @@ public class PagerankMap2Prep extends Configured implements Tool {
   public static class ReduceStage2
         extends Reducer<Text, Text, Text, byte[]> {
 
+    int blockSize = 1;
     MatComparator mc = new MatComparator();
+
+    public void setup(Context context) 
+        throws IOException, InterruptedException {
+      Configuration conf = context.getConfiguration();
+      blockSize = conf.getInt("pagerank.block.size", -1);
+    }
 
     public void reduce(final Text key,
                        final Iterable<Text> values,
                        final Context context)
         throws IOException, InterruptedException {
 
-      ArrayList<Integer> dstIdList = new ArrayList<Integer>();
-      ArrayList<Integer> srcIdList = new ArrayList<Integer>();
-      ArrayList<Double> probList = new ArrayList<Double>();
+      ByteArrayOutputStream out = new ByteArrayOutputStream();
+
       for (Text val: values) {
         String lineText = val.toString();
         String[] line = lineText.split("\t");
         int dstId = Integer.parseInt(line[0]);
         int srcId = Integer.parseInt(line[1]);
         double prob = Double.parseDouble(line[2]);
-        dstIdList.add(dstId);
-        srcIdList.add(srcId);
-        probList.add(prob);
+        ByteBuffer bbuf = ByteBuffer.allocate(4 + 4 + 8);
+        bbuf.putInt(dstId);
+        bbuf.putInt(srcId);
+        bbuf.putDouble(prob);
+        out.write(bbuf.array());
       }
 
-      ByteBuffer bbuf = ByteBuffer.allocate(dstIdList.size() * (4 + 4 + 8));
-      for (int i = 0; i < dstIdList.size(); ++i) {
-        bbuf.putInt(dstIdList.get(i));
-        bbuf.putInt(srcIdList.get(i));
-        bbuf.putDouble(probList.get(i));
-      }
-
-      context.write(key, bbuf.array());
+      context.write(key, out.toByteArray());
     }
   }
 

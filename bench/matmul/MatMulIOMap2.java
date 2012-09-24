@@ -1,4 +1,5 @@
-package bench.pagerank;
+
+package bench.matmul;
 
 import java.io.BufferedReader;
 import java.io.BufferedInputStream;
@@ -44,7 +45,7 @@ import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.map2.*;
 
-public class MatMulMap2 {
+public class MatMulIOMap2 {
   public static class MapStage
         extends Mapper<String[], TrackedSegments, Text, BytesWritable> {
 
@@ -75,74 +76,67 @@ public class MatMulMap2 {
         AIdx = 1; BIdx = 0;
       }
       Segment[] segments = trSegs.segments;
-      Segment segA = segment[AIdx];
-      Segment segB = segment[BIdx];
+      Segment segA = segments[AIdx];
+      Segment segB = segments[BIdx];
 
-      FSDataInputStream in;
-      DataInputStream dataIn;
+      FSDataInputStream AIn;
+      FSDataInputStream BIn;
+      DataInputStream dataAIn;
+      DataInputStream dataBIn = null;
       
       long start, end;
 
-      //read the first segment into memory
-      int sizeB = numRowsInBlock * numColsInBlock;
-      double[] matrixBlockB = new double[sizeA];
-      start = System.currentTimeMillis();
-      if (useCache) {
-        in = fs.openCachedReadOnly(segB.getPath());
-      }
-      else {
-        in = fs.open(segB.getPath());
-      }
-      in.seek(segB.getOffset());
-      dataIn = new DataInputStream(new BufferedInputStream(in));
-      for (int i = 0; i < sizeB; ++i) {
-        matrixBlockB[i] = dataIn.readDouble();
-      }
-      dataIn.close();
-      end = System.currentTimeMillis();
-      System.out.println("matrixB read time: " + (end - start) + " ms");
-      System.out.println("matrixB read bandwidth: " + 
-                         sizeB * 8 / (end - start) / 1000 + " MBytes/s");
-
       //do the multiplication
       if (useCache) {
-        in = fs.openCachedReadOnly(segA.getPath());
+        AIn = fs.openCachedReadOnly(segA.getPath());
+        BIn = fs.openCachedReadOnly(segB.getPath());
       }
       else {
-        in = fs.open(segA.getPath());
+        AIn = fs.open(segA.getPath());
+        BIn = fs.open(segB.getPath());
       }
-      in.seek(segA.getOffset());
-      dataIn = new DataInputStream(new BufferedInputStream(in));
+      AIn.seek(segA.getOffset());
+      dataAIn = new DataInputStream(new BufferedInputStream(AIn));
+
       ByteBuffer outbuf = ByteBuffer.allocate(
           numRowsInBlock * numRowsInBlock * 8);
-      long readTime = 0, calcTime = 0;
+      long readATime = 0, readBTime = 0;
       for (int i = 0; i < numRowsInBlock; ++i) {
         double[] rowA = new double[numColsInBlock];
         start = System.currentTimeMillis();
         for (int j = 0; j < numColsInBlock; ++j) {
-          rowA[j] = dataIn.readDouble();
+          rowA[j] = dataAIn.readDouble();
         }
         end = System.currentTimeMillis();
-        readTime += end - start;
+        readATime += end - start;
 
-        //caclulate out[i, :]
+        BIn.seek(segB.getOffset());
+        dataBIn = new DataInputStream(new BufferedInputStream(BIn));
         start = System.currentTimeMillis();
         for (int j = 0; j < numRowsInBlock; ++j) {
-          //calculate out [i, j]
+
           double sum = 0;
           for (int k = 0; k < numColsInBlock; ++k) {
-            sum += rowA[k] * matrixBlockB[j * numColsInBlock + k];
+            sum += dataBIn.readDouble() * rowA[k];
           }
+          context.setStatus("finished read row: " + j);
           outbuf.putDouble(sum);
         }
         end = System.currentTimeMillis();
-        calcTime += end - start;
+        readBTime += end - start;
       }
-      dataIn.close();
-      System.out.println("matrixA read time: " + readTime + " ms");
+
+      dataAIn.close();
+      dataBIn.close();
+
+      System.out.println("matrixA read time: " + readATime + " ms");
       System.out.println("matrixA read bandwidth: " + 
-                         sizeB * 8 / readTime / 1000 + " MBytes/s");
-      System.out.println("multiplication calc time: " + calcTime + " ms");
+                         numRowsInBlock*numColsInBlock*8 / readATime / 1000 + 
+                         " MBytes/s");
+      System.out.println("matrixB read time: " + readBTime + " ms");
+      System.out.println("matrixB read bandwidth: " + 
+                         numRowsInBlock*numColsInBlock*8 / readBTime / 1000 + 
+                         " MBytes/s");
 
       //prepare for context write
       String[] Aindices = indices[AIdx].split("_");
@@ -200,7 +194,7 @@ public class MatMulMap2 {
 
   public static void main(final String[] args) {
     try {
-      MatMulMap2 mmm = new MatMulMap2();
+      MatMulIOMap2 mmm = new MatMulIOMap2();
       mmm.run(args);
     }
     catch (Exception e) {
@@ -211,7 +205,7 @@ public class MatMulMap2 {
 
   public void run(String[] args) throws Exception {
     if (args.length != 2) {
-      System.out.println("MatMulMap2 <inPath> <outPath>");
+      System.out.println("MatMulIOMap2 <inPath> <outPath>");
       System.exit(-1);
     }
     inPath = new Path(args[0]);
@@ -229,8 +223,10 @@ public class MatMulMap2 {
       prep.run();
     }
 
+    fs.delete(outPath);
+
     start = System.currentTimeMillis();
-    waitForCompletion(configStage());
+    waitForJobFinish(configStage());
     end = System.currentTimeMillis();
 
     System.out.println("===map2 experiment===<time>[MatMulMap2]: " + 
@@ -247,8 +243,8 @@ public class MatMulMap2 {
 
   private Job configStage() throws Exception {
     int numReducers = conf.getInt("matmul.num.reducers", 1);
-    Job job = new Job(conf, "MatMulMap2");
-    job.setJarByClass(MatMulMap2.class);
+    Job job = new Job(conf, "MatMulIOMap2");
+    job.setJarByClass(MatMulIOMap2.class);
     job.setMapperClass(MapStage.class);
     job.setReducerClass(RedStage.class);
     job.setNumReduceTasks(numReducers);
@@ -268,16 +264,17 @@ public class MatMulMap2 {
 
   public static class MatMulMap2Filter implements Map2Filter {
     public boolean accept(String idx0, String idx1) {
-      String AIdx, BIdx;
-      if (idx0.contains("A")) {
-        AIdx = idx0; BIdx = idx1;
-      }
-      else {
-        BIdx = idx0; AIdx = idx1;
-      }
+      String AIdx = null, BIdx = null;
+      if (idx0.contains("A")) AIdx = idx0;
+      if (idx0.contains("B")) BIdx = idx0;
+      if (idx1.contains("A")) AIdx = idx1;
+      if (idx1.contains("B")) BIdx = idx1;
+
+      if ((AIdx == null) || (BIdx == null)) return false;
+
       String[] Aindices = AIdx.split("_");
       String[] Bindices = BIdx.split("_");
-      if (Aindices.length != 5 || Bindices.length != 2) return false;
+      if (Aindices.length != 5 || Bindices.length != 5) return false;
       try {
         int AColId = Integer.parseInt(Aindices[4]);
         int BRowId = Integer.parseInt(Bindices[2]);
@@ -287,6 +284,15 @@ public class MatMulMap2 {
         return false;
       }
       return false;
+    }
+  }
+
+  public static class MatMulMap2OutputFormat<K, V>
+        extends IndexedByteArrayOutputFormat<K, V> {
+    @Override
+    protected <K, V> String generateIndexForKeyValue(
+        K key, V value, String path) {
+      return  key.toString();
     }
   }
 
