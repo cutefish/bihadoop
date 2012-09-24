@@ -229,6 +229,8 @@ public class MatMulMemMap2 {
       prep.run();
     }
 
+    fs.delete(outPath);
+
     start = System.currentTimeMillis();
     waitForJobFinish(configStage());
     end = System.currentTimeMillis();

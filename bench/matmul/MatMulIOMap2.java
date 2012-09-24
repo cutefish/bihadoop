@@ -222,6 +222,8 @@ public class MatMulIOMap2 {
       prep.run();
     }
 
+    fs.delete(outPath);
+
     start = System.currentTimeMillis();
     waitForJobFinish(configStage());
     end = System.currentTimeMillis();
