@@ -46,7 +46,7 @@ import org.apache.hadoop.map2.*;
 
 public class MatMulMap2 {
   public static class MapStage
-        extends Mapper<String[], TrackedSegments, String, BytesWritable> {
+        extends Mapper<String[], TrackedSegments, Text, BytesWritable> {
 
     FileSystem fs;
     int numRowsInBlock;
@@ -67,8 +67,227 @@ public class MatMulMap2 {
                     final Context context) 
         throws IOException, InterruptedException {
 
-      int matAIndex = 0;
+      int AIdx = 0, BIdx = 0;
+      if (indices[0].contains("A")) {
+        AIdx = 0; BIdx = 1;
+      }
+      else {
+        AIdx = 1; BIdx = 0;
+      }
+      Segment[] segments = trSegs.segments;
+      Segment segA = segment[AIdx];
+      Segment segB = segment[BIdx];
 
+      FSDataInputStream in;
+      DataInputStream dataIn;
+      
+      long start, end;
+
+      //read the first segment into memory
+      int sizeB = numRowsInBlock * numColsInBlock;
+      double[] matrixBlockB = new double[sizeA];
+      start = System.currentTimeMillis();
+      if (useCache) {
+        in = fs.openCachedReadOnly(segB.getPath());
+      }
+      else {
+        in = fs.open(segB.getPath());
+      }
+      in.seek(segB.getOffset());
+      dataIn = new DataInputStream(new BufferedInputStream(in));
+      for (int i = 0; i < sizeB; ++i) {
+        matrixBlockB[i] = dataIn.readDouble();
+      }
+      dataIn.close();
+      end = System.currentTimeMillis();
+      System.out.println("matrixB read time: " + (end - start) + " ms");
+      System.out.println("matrixB read bandwidth: " + 
+                         sizeB * 8 / (end - start) / 1000 + " MBytes/s");
+
+      //do the multiplication
+      if (useCache) {
+        in = fs.openCachedReadOnly(segA.getPath());
+      }
+      else {
+        in = fs.open(segA.getPath());
+      }
+      in.seek(segA.getOffset());
+      dataIn = new DataInputStream(new BufferedInputStream(in));
+      ByteBuffer outbuf = ByteBuffer.allocate(
+          numRowsInBlock * numRowsInBlock * 8);
+      long readTime = 0, calcTime = 0;
+      for (int i = 0; i < numRowsInBlock; ++i) {
+        double[] rowA = new double[numColsInBlock];
+        start = System.currentTimeMillis();
+        for (int j = 0; j < numColsInBlock; ++j) {
+          rowA[j] = dataIn.readDouble();
+        }
+        end = System.currentTimeMillis();
+        readTime += end - start;
+
+        //caclulate out[i, :]
+        start = System.currentTimeMillis();
+        for (int j = 0; j < numRowsInBlock; ++j) {
+          //calculate out [i, j]
+          double sum = 0;
+          for (int k = 0; k < numColsInBlock; ++k) {
+            sum += rowA[k] * matrixBlockB[j * numColsInBlock + k];
+          }
+          outbuf.putDouble(sum);
+        }
+        end = System.currentTimeMillis();
+        calcTime += end - start;
+      }
+      dataIn.close();
+      System.out.println("matrixA read time: " + readTime + " ms");
+      System.out.println("matrixA read bandwidth: " + 
+                         sizeB * 8 / readTime / 1000 + " MBytes/s");
+      System.out.println("multiplication calc time: " + calcTime + " ms");
+
+      //prepare for context write
+      String[] Aindices = indices[AIdx].split("_");
+      String[] Bindices = indices[BIdx].split("_");
+      String rowIdx = Aindices[2];
+      String colIdx = Bindices[4];
+
+        context.write(new Text(rowIdx + "\t" + colIdx),
+                      new BytesWritable(outbuf.array()));
     }
   }
+
+  public static class RedStage
+        extends Reducer<Text, BytesWritable, Text, byte[]> {
+
+    int numRowsInBlock;
+
+    public void setup(Context context) 
+        throws IOException, InterruptedException {
+      Configuration conf = context.getConfiguration();
+      numRowsInBlock = conf.getInt("matmul.num.rows.in.block", 1);
+    }
+
+    public void reduce(final Text key,
+                       final Iterable<BytesWritable> values,
+                       final Context context)
+        throws IOException, InterruptedException {
+
+      int size = numRowsInBlock * numRowsInBlock;
+      double[] out = new double[size];
+      ByteBuffer outBuf = ByteBuffer.allocate(size *8);
+      for (BytesWritable val: values) {
+        ByteBuffer buf = ByteBuffer.wrap(val.getBytes());
+        outBuf.rewind();
+        for (int i = 0; i < size; ++i) {
+          outBuf.mark();
+          double curr = outBuf.getDouble();
+          curr += buf.getDouble();
+          outBuf.reset();
+          outBuf.putDouble(curr);
+        }
+      }
+
+      context.write(key, outBuf.array());
+    }
+  }
+
+  /****************************************************************************
+   * command line
+   ***************************************************************************/
+
+  protected Path inPath = null;
+  protected Path outPath = null;
+  Configuration conf;
+
+  public static void main(final String[] args) {
+    try {
+      MatMulMap2 mmm = new MatMulMap2();
+      mmm.run(args);
+    }
+    catch (Exception e) {
+      System.out.println("Exception: " + StringUtils.stringifyException(e));
+      System.exit(-1);
+    }
+  }
+
+  public void run(String[] args) throws Exception {
+    if (args.length != 2) {
+      System.out.println("MatMulMap2 <inPath> <outPath>");
+      System.exit(-1);
+    }
+    inPath = new Path(args[0]);
+    outPath = new Path(args[1]);
+    conf = new Configuration();
+    conf.addResource("matmul-conf.xml");
+    FileSystem fs = FileSystem.get(conf);
+    long start, end;
+
+    //prepare
+    if ((conf.getBoolean("matmul.initialize", true)) ||
+        (!fs.exists(inPath))) {
+      MatMulPrep prep = new MatMulPrep();
+      prep.setPath(inPath);
+      prep.run();
+    }
+
+    start = System.currentTimeMillis();
+    waitForCompletion(configStage());
+    end = System.currentTimeMillis();
+
+    System.out.println("===map2 experiment===<time>[MatMulMap2]: " + 
+                       (end - start) + " ms");
+  }
+
+  private Job waitForJobFinish(Job job) throws Exception {
+    boolean succeeded = job.waitForCompletion(true);
+    if (!succeeded) {
+      throw new RuntimeException(job.toString());
+    }
+    return job;
+  }
+
+  private Job configStage() throws Exception {
+    int numReducers = conf.getInt("matmul.num.reducers", 1);
+    Job job = new Job(conf, "MatMulMap2");
+    job.setJarByClass(MatMulMap2.class);
+    job.setMapperClass(MapStage.class);
+    job.setReducerClass(RedStage.class);
+    job.setNumReduceTasks(numReducers);
+    job.setMapOutputKeyClass(Text.class);
+    job.setMapOutputValueClass(BytesWritable.class);
+    job.setOutputKeyClass(Text.class);
+    job.setOutputValueClass(byte[].class);
+    job.setInputFormatClass(Map2InputFormat.class);
+    Map2InputFormat.setFileNameAsIndex(job);
+    Map2InputFormat.setIndexFilter(job, MatMulMap2Filter.class);
+    Map2InputFormat.setInputPaths(job, inPath);
+    job.setOutputFormatClass(MatMulMap2OutputFormat.class);
+    FileOutputFormat.setOutputPath(job, outPath);
+    return job;
+  }
+
+
+  public static class MatMulMap2Filter implements Map2Filter {
+    public boolean accept(String idx0, String idx1) {
+      String AIdx, BIdx;
+      if (idx0.contains("A")) {
+        AIdx = idx0; BIdx = idx1;
+      }
+      else {
+        BIdx = idx0; AIdx = idx1;
+      }
+      String[] Aindices = AIdx.split("_");
+      String[] Bindices = BIdx.split("_");
+      if (Aindices.length != 5 || Bindices.length != 2) return false;
+      try {
+        int AColId = Integer.parseInt(Aindices[4]);
+        int BRowId = Integer.parseInt(Bindices[2]);
+        if (AColId == BRowId) return true;
+      }
+      catch(Exception e) {
+        return false;
+      }
+      return false;
+    }
+  }
+
 }
