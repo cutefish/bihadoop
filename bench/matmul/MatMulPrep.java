@@ -65,17 +65,17 @@ public class MatMulPrep {
         for (int k = 0; k < numColBlocks; ++k) {
           Path blockOutPath;
           if (i == 0) {
-            blockOutPath = new Path(outPath, "A_r" + j + "_c" + i);
+            blockOutPath = new Path(outPath, "A_r_" + j + "_c_" + k);
           }
           else {
-            blockOutPath = new Path(outPath, "B_r" + j + "_c" + i);
+            blockOutPath = new Path(outPath, "B_r_" + k + "_c_" + j);
           }
           BufferedOutputStream out = new BufferedOutputStream(
               fs.create(blockOutPath));
           DataOutputStream dataOut = new DataOutputStream(out);
           //foreach element
-          for (int r = 0; r < numColsInBlock; ++r) {
-            for (int s = 0; s < numRowsInBlock; ++s) {
+          for (int r = 0; r < numRowsInBlock; ++r) {
+            for (int s = 0; s < numColsInBlock; ++s) {
               dataOut.writeDouble(rand.nextDouble());
             }
           }

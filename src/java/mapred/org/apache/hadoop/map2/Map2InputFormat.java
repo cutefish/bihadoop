@@ -234,6 +234,11 @@ public class Map2InputFormat
     Configuration conf = context.getConfiguration();
     return conf.getBoolean("mapred.map2.input.fileNameAsIndex", false);
   }
+
+  public void setFileNameAsIndex(Job job) {
+    Configuration conf = job.getConfiguration();
+    conf.setBoolean("mapred.map2.input.fileNameAsIndex", true);
+  }
   
   public RecordReader<String[], TrackedSegments> createRecordReader(
       InputSplit split, TaskAttemptContext context) 
