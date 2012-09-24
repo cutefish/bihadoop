@@ -57,7 +57,9 @@ public class Map2InputFormat
       long length = file.getLen();
       BlockLocation[] blkLocations = 
           fs.getFileBlockLocations(file, 0, length);
+      System.out.println(fileNameAsIndex(job));
       if (fileNameAsIndex(job)) {
+        System.out.println(path);
         //use file name as index, total file as the segment
         idxList.add(path.toString());
         Segment seg = new Segment(path, 0, length);

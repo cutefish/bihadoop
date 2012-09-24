@@ -1,6 +1,7 @@
 package bench.pagerank;
 
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -173,25 +174,22 @@ public class PagerankMap2Prep extends Configured implements Tool {
                        final Context context)
         throws IOException, InterruptedException {
 
-      int numBytes = (int)(blockSize * 1.5 * (4 + 4 + 8));
-      ByteBuffer bbuf = ByteBuffer.allocate(numBytes);
+      ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-      int count = 0;
       for (Text val: values) {
         String lineText = val.toString();
         String[] line = lineText.split("\t");
         int dstId = Integer.parseInt(line[0]);
         int srcId = Integer.parseInt(line[1]);
         double prob = Double.parseDouble(line[2]);
+        ByteBuffer bbuf = ByteBuffer.allocate(4 + 4 + 8);
         bbuf.putInt(dstId);
         bbuf.putInt(srcId);
         bbuf.putDouble(prob);
-        count ++;
+        out.write(bbuf.array());
       }
 
-      byte[] out = Arrays.copyOf(bbuf.array(), count * (4 + 4 + 8));
-
-      context.write(key, out);
+      context.write(key, out.toByteArray());
     }
   }
 
