@@ -281,9 +281,9 @@ def cleanupAll(argv):
                    "-o UserKnownHostsFile=/dev/null "
                    "-o StrictHostKeyChecking=no "
                    "%s "
-                   '"rm -r /tmp/hadoop*; '
-                   'rm -r /home/%s/tmp/*; '
-                   'rm -r /home/%s/hadoop/logs/*" '
+                   'rm -r /tmp/*;'
+                   'rm -r /home/%s/tmp/*;'
+                   'rm -r /home/%s/hadoop/logs/* '
                    %(userName, slave, userName, userName))
         print command
         subprocess.call(command.split(' '));
