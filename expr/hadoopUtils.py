@@ -280,10 +280,11 @@ def cleanupAll(argv):
         command = ("ssh -i /home/%s/pem/HadoopExpr.pem "
                    "-o UserKnownHostsFile=/dev/null "
                    "-o StrictHostKeyChecking=no "
-                   ' "rm -r /tmp/hadoop*;'
-                   ' rm -r /home/%s/tmp/*;'
-                   ' rm -r /home/hadoop/logs/*" '
-                   %(userName, userName))
+                   "%s "
+                   '"rm -r /tmp/hadoop*; '
+                   'rm -r /home/%s/tmp/*; '
+                   'rm -r /home/hadoop/logs/*" '
+                   %(userName, slave, userName))
         print command
         subprocess.call(command.split(' '));
 
