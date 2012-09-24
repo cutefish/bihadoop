@@ -235,7 +235,7 @@ public class Map2InputFormat
     return conf.getBoolean("mapred.map2.input.fileNameAsIndex", false);
   }
 
-  public void setFileNameAsIndex(Job job) {
+  public static void setFileNameAsIndex(Job job) {
     Configuration conf = job.getConfiguration();
     conf.setBoolean("mapred.map2.input.fileNameAsIndex", true);
   }

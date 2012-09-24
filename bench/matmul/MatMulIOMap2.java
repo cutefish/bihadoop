@@ -241,20 +241,20 @@ public class MatMulIOMap2 {
   private Job configStage() throws Exception {
     int numReducers = conf.getInt("matmul.num.reducers", 1);
     Job job = new Job(conf, "MatMulIOMap2");
-  //  job.setJarByClass(MatMulIOMap2.class);
-  //  job.setMapperClass(MapStage.class);
-  //  job.setReducerClass(RedStage.class);
-  //  job.setNumReduceTasks(numReducers);
-  //  job.setMapOutputKeyClass(Text.class);
-  //  job.setMapOutputValueClass(BytesWritable.class);
-  //  job.setOutputKeyClass(Text.class);
-  //  job.setOutputValueClass(byte[].class);
-  //  job.setInputFormatClass(Map2InputFormat.class);
-  //  Map2InputFormat.setFileNameAsIndex(job);
-  //  Map2InputFormat.setIndexFilter(job, MatMulMap2Filter.class);
-  //  Map2InputFormat.setInputPaths(job, inPath);
-  //  job.setOutputFormatClass(MatMulMap2OutputFormat.class);
-  //  FileOutputFormat.setOutputPath(job, outPath);
+    job.setJarByClass(MatMulIOMap2.class);
+    job.setMapperClass(MapStage.class);
+    job.setReducerClass(RedStage.class);
+    job.setNumReduceTasks(numReducers);
+    job.setMapOutputKeyClass(Text.class);
+    job.setMapOutputValueClass(BytesWritable.class);
+    job.setOutputKeyClass(Text.class);
+    job.setOutputValueClass(byte[].class);
+    job.setInputFormatClass(Map2InputFormat.class);
+    Map2InputFormat.setFileNameAsIndex(job);
+    Map2InputFormat.setIndexFilter(job, MatMulMap2Filter.class);
+    Map2InputFormat.setInputPaths(job, inPath);
+    job.setOutputFormatClass(MatMulMap2OutputFormat.class);
+    FileOutputFormat.setOutputPath(job, outPath);
     return job;
   }
 
@@ -280,6 +280,15 @@ public class MatMulIOMap2 {
         return false;
       }
       return false;
+    }
+  }
+
+  public static class MatMulMap2OutputFormat<K, V>
+        extends IndexedByteArrayOutputFormat<K, V> {
+    @Override
+    protected <K, V> String generateIndexForKeyValue(
+        K key, V value, String path) {
+      return  key.toString();
     }
   }
 

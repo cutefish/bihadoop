@@ -4,6 +4,17 @@
 <!-- Put site-specific property overrides in this file. -->
 
 <configuration>
+    <!--
+    <property>
+        <name>pagerank.num.nodes</name>
+        <value>9695142</value>
+    </property>
+    <property>
+        <name>pagerank.block.size</name>
+        <value>2400000</value>
+        <description>map2 block size</description>
+    </property>
+    -->
     <property>
         <name>pagerank.num.nodes</name>
         <value>4847571</value>

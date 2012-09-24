@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+    <property>
+        <name>matmul.num.row.blocks</name>
+        <value>12</value>
+    </property>
+    <property>
+        <name>matmul.num.col.blocks</name>
+        <value>1</value>
+    </property>
+    <property>
+        <name>matmul.num.rows.in.block</name>
+        <value>100</value>
+    </property>
+    <property>
+        <name>matmul.num.cols.in.block</name>
+        <value>10000</value>
+    </property>
+    <property>
+        <name>matmul.initialize</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>pagerank.useCache</name>
+        <value>false</value>
+    </property>
+</configuration>
