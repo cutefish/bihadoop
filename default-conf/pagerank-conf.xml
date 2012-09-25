@@ -10,14 +10,8 @@
         <value>9695142</value>
     </property>
     <property>
-        <name>pagerank.num.row.blocks</name>
-        <value>3</value>
-        <description>map2 block size</description>
-    </property>
-    <property>
-        <name>pagerank.num.col.blocks</name>
-        <value>8</value>
-        <description>map2 block size</description>
+        <name>pagerank.num.nodes</name>
+        <value>16</value>
     </property>
     -->
     <property>
@@ -27,34 +21,18 @@
     <property>
         <name>pagerank.num.row.blocks</name>
         <value>4</value>
-        <description>map2 block size</description>
+        <description>map2 number of row blocks</description>
     </property>
     <property>
         <name>pagerank.num.col.blocks</name>
         <value>4</value>
-        <description>map2 block size</description>
+        <description>map2 number of column blocks</description>
     </property>
     <property>
         <name>pagerank.block.width</name>
         <value>16</value>
         <description>pegasus block algorithm width</description>
     </property>
-    <!--
-    <property>
-        <name>pagerank.num.nodes</name>
-        <value>16</value>
-    </property>
-    <property>
-        <name>pagerank.num.row.blocks</name>
-        <value>4</value>
-        <description>map2 block size</description>
-    </property>
-    <property>
-        <name>pagerank.num.col.blocks</name>
-        <value>4</value>
-        <description>map2 block size</description>
-    </property>
-    -->
     <property>
         <name>pagerank.max.num.iteration</name>
         <value>100</value>

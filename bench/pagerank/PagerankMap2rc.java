@@ -73,6 +73,10 @@ public class PagerankMap2rc extends Configured implements Tool {
       numRowBlocks = conf.getInt("pagerank.num.row.blocks", -1);
       numColBlocks = conf.getInt("pagerank.num.col.blocks", -1);
       useCache = conf.getBoolean("pagerank.useCache", true);
+
+      System.out.println("num nodes: " + numNodes);
+      System.out.println("num row blocks: " + numRowBlocks);
+      System.out.println("num col blocks: " + numColBlocks);
     }
 
     /**
@@ -209,7 +213,12 @@ public class PagerankMap2rc extends Configured implements Tool {
           partialRank = xferProb * rank;
 
           int rowIdInBlock = rowId / numRowBlocks;
-          rankArray[rowIdInBlock] += partialRank;
+          if (rankArray[rowIdInBlock] < -1) {
+            rankArray[rowIdInBlock] = partialRank;
+          }
+          else {
+            rankArray[rowIdInBlock] += partialRank;
+          }
         }
         catch (Exception e) {
           System.out.println("" + e + ", on bytesRead: " + bytesRead);
@@ -408,7 +417,11 @@ public class PagerankMap2rc extends Configured implements Tool {
     }
 
     conf = getConf();
+    if (conf == null) {
+      conf = new Configuration();
+    }
     conf.addResource("pagerank-conf.xml");
+    setConf(conf);
     checkValidity();
 
     edgePath = new Path(args[0]);

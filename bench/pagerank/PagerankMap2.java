@@ -71,6 +71,9 @@ public class PagerankMap2 extends Configured implements Tool {
       numNodes = conf.getInt("pagerank.num.nodes", 1);
       numBlocks = conf.getInt("pagerank.num.col.blocks", -1);
       useCache = conf.getBoolean("pagerank.useCache", true);
+
+      System.out.println("num nodes: " + numNodes);
+      System.out.println("num blocks: " + numBlocks);
     }
 
     /**
@@ -144,29 +147,29 @@ public class PagerankMap2 extends Configured implements Tool {
       dataIn = new DataInputStream(new BufferedInputStream(in));
 
       int bytesRead = 0;
-      count = 0;
+      int actualBlockSize = 0;
       while(bytesRead < nodeSgmt.getLength()) {
         int rowId = dataIn.readInt();
         double rank = dataIn.readDouble();
         int rowIdInBlock = rowId / numBlocks;
         prevRank[rowIdInBlock] = rank;
         bytesRead += (4 + 8);
-        count ++;
+        actualBlockSize ++;
       }
       //we add a header ahead of buffer to distinguish between previous and
       //current value
       ByteBuffer bbuf;
       if (blockRowId == 0) {
-        bbuf = ByteBuffer.allocate(count * 12 + 4);
+        bbuf = ByteBuffer.allocate(actualBlockSize * 12 + 4);
         bbuf.put((byte)0x55);
         bbuf.put((byte)0x00);
         bbuf.put((byte)0x55);
         bbuf.put((byte)0x00);
-        count = 0;
+        int n = 0;
         for (int i = blockColId; i < numNodes; i += numBlocks) {
           bbuf.putInt(i);
-          bbuf.putDouble(prevRank[count]);
-          count ++;
+          bbuf.putDouble(prevRank[n]);
+          n ++;
         }
         context.write(new Text("" + blockColId), new BytesWritable(bbuf.array()));
       }
@@ -206,7 +209,12 @@ public class PagerankMap2 extends Configured implements Tool {
           partialRank = xferProb * rank;
 
           int rowIdInBlock = rowId / numBlocks;
-          rankArray[rowIdInBlock] += partialRank;
+          if (rankArray[rowIdInBlock] < -1) {
+            rankArray[rowIdInBlock] = partialRank;
+          }
+          else {
+            rankArray[rowIdInBlock] += partialRank;
+          }
         }
         catch (Exception e) {
           System.out.println("" + e + ", on bytesRead: " + bytesRead);
@@ -217,17 +225,16 @@ public class PagerankMap2 extends Configured implements Tool {
       byte[] header = new byte[] { 
         (byte) 0xff, (byte)0x00, (byte)0xff, (byte)0x00 };
       out.write(header);
-      count = 0;
+      int n = 0;
       for (int i = blockRowId; i < numNodes; i += numBlocks) {
-        if (rankArray[i] > -1) {
+        if (rankArray[n] > -1) {
           ByteBuffer tmpBuf = ByteBuffer.allocate(4 + 8);
           tmpBuf.putInt(i);
-          tmpBuf.putDouble(rankArray[count]);
+          tmpBuf.putDouble(rankArray[n]);
           out.write(tmpBuf.array());
-          tmpBuf.putInt(i);
-          tmpBuf.putDouble(rankArray[count]);
+
         }
-        count ++;
+        n++;
       }
       System.out.println("map output buffer length: " + out.size());
       context.write(new Text("" + blockRowId),
@@ -296,7 +303,8 @@ public class PagerankMap2 extends Configured implements Tool {
             (header[2] == (byte) 0x55) &&
             (header[3] == (byte) 0x00)) {
           //previous rank
-          for (int i = 0; i < blockSize; ++i) {
+          int size = (length - 4) / 12;
+          for (int i = 0; i < size; ++i) {
             int rowId = bbuf.getInt();
             double rank = bbuf.getDouble();
             int rowIdInBlock = rowId / numBlocks;
@@ -307,7 +315,8 @@ public class PagerankMap2 extends Configured implements Tool {
                  (header[1] == (byte) 0x00) &&
                  (header[2] == (byte) 0xff) &&
                  (header[3] == (byte) 0x00)) {
-          for (int i = 0; i < blockSize; ++i) {
+          int size = (length - 4) / 12;
+          for (int i = 0; i < size; ++i) {
             int rowId = bbuf.getInt();
             double rank = bbuf.getDouble();
             int rowIdInBlock = rowId / numBlocks;
@@ -387,7 +396,11 @@ public class PagerankMap2 extends Configured implements Tool {
     }
 
     conf = getConf();
+    if (conf == null) {
+      conf = new Configuration();
+    }
     conf.addResource("pagerank-conf.xml");
+    setConf(conf);
     checkValidity();
 
     edgePath = new Path(args[0]);

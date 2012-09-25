@@ -45,6 +45,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   private static final String DISK_CACHE_CAPACITY = "block.cache.disk.capacity.per.user";
   private static final String MEM_CACHE_CAPACITY = "block.cache.memory.capacity.per.user";
   private static final String LOCAL_DIR = "block.cache.local.dir";
+  private static final String CACHE_LOCAL = "block.cache.should.cache.local";
 
   //default values
   private static final String LOCAL_HOST = "127.0.0.1";
@@ -61,11 +62,13 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   private long diskCacheSizePerUser;
   private long memCacheSizePerUser;
   private String localCacheDir;
+  private boolean cacheLocal = true;
   private Cache cache;
   private CacheFileFreeStore freeStore = new CacheFileFreeStore();
   private BlockCacheStatus prevStatus = new BlockCacheStatus();
   private volatile long hits;
   private volatile long misses;
+
 
   //service
   private Server rpcListener;
@@ -87,6 +90,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       throw new IOException(
           "Cannot set local cache dir at " + localCacheDir);
     }
+    cacheLocal = conf.getBoolean(CACHE_LOCAL, false);
 
     cache = new Cache();
     freeStoreThread = new Thread(freeStore);
@@ -621,11 +625,6 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
 
   public Block cacheBlockAt(String fsUriStr, String user, String pathStr, 
                             long versionId, long pos) throws IOException {
-    LOG.debug("Caching block at" + 
-              " user: " + user + 
-              " fs: " + fsUriStr + 
-              " path: " + pathStr + 
-              " pos: " + pos);
     //normalize a path
     URI fsUri, pathUri;
     try {
@@ -645,6 +644,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     if (block != null) {
       if (block.getVersion() == versionId) {
         LOG.debug("Hits. Block already exists with version: " + versionId + 
+                  " Block: " + block.toString() + 
                   " useReplica: " + block.shouldUseReplica());
         hits ++;
         cache.renew(user, block);
@@ -672,7 +672,6 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     //deal with eof
     if (pos >= file.getLen()) 
       return new Block(path, -1, -1, false, "");
-    LOG.debug("Caching file size: " + file.getLen());
     //try to see if the block can be local
     //if local just return the block
     BlockLocation loc = info.getLocation(pos);
@@ -681,18 +680,14 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     if (names.length > 0) host = names[0];
     LOG.debug("File location: " + host);
     InetSocketAddress bestAddr = NetUtils.createSocketAddr(host);
-    boolean isLocal = isLocalAddress(bestAddr);
+    boolean isLocal = false;
+    if (cacheLocal) {
+      isLocal = isLocalAddress(bestAddr);
+    }
     //put into cache
     long off = loc.getOffset();
     long len = loc.getLength();
     boolean first = cache.put(user, path, off, len, isLocal);
-    LOG.info("Cached block at: " + 
-              " user: " + user + 
-              " path: " + path + 
-              " off: " + off + 
-              " len: " + len + 
-              " isLocal: " + isLocal + 
-              " first: " + first);
     block = cache.get(user, path, off);
     block.setVersion(versionId);
     if (isLocal) {
@@ -701,9 +696,10 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       return block;
     }
     //caching remote block
+    LOG.debug("Misses. Constructing block or wait for construction." + 
+              " Block: " + block.toString());
     block = waitOrConstructBlock(first, block, info, user, versionId);
     block.setVersion(versionId);
-    LOG.debug("Misses. Constructing block or wait for construction.");
     misses ++;
     return block;
   }

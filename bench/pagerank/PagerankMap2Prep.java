@@ -19,6 +19,7 @@ import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.Partitioner;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.map2.IndexedTextOutputFormat;
@@ -100,14 +101,14 @@ public class PagerankMap2Prep extends Configured implements Tool {
   public static class MapStage2
         extends Mapper<Object, Text, Text, Text> {
 
-    int blockSize = 1;
+    int numBlocks = 1;
     int numNodes = 1;
     
     public void setup(Context context) 
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
       numNodes = conf.getInt("pagerank.num.nodes", -1);
-      blockSize = conf.getInt("pagerank.block.size", -1);
+      numBlocks = conf.getInt("pagerank.num.col.blocks", -1);
     }
 
     public void map(final Object key, final Text value,
@@ -127,33 +128,16 @@ public class PagerankMap2Prep extends Configured implements Tool {
 
       int rowId = Integer.parseInt(line[0]);
       int colId = Integer.parseInt(line[1]);
-      int blockRowId = rowId %(numNodes / blockSize);
-      int blockColId = colId %(numNodes / blockSize);
+      int blockRowId = rowId % numBlocks;
+      int blockColId = colId % numBlocks;
       //int blockRowId = rowId / blockSize;
       //int blockColId = colId / blockSize;
 
-      Text newKey = new Text("edge" + "\t" + blockRowId + "\t" + blockColId);
+      Text newKey = new Text("edge" + "\t" + blockRowId + "\t" + blockColId + 
+                             "\t" + numBlocks);
 
       //key = blockId, value = value
       context.write(newKey, value);
-    }
-  }
-
-  static class MatComparator implements Comparator {
-    public int compare(Object o1, Object o2) {
-      String s1 = o1.toString();
-      String s2 = o2.toString();
-
-      String[] Id1 = s1.split("\t");
-      String[] Id2 = s2.split("\t");
-      if (Id1.length != 3) return 1;
-      if (Id2.length != 3) return -1;
-      int rowId1 = Integer.parseInt(Id1[0]);
-      int rowId2 = Integer.parseInt(Id2[0]);
-      int colId1 = Integer.parseInt(Id1[1]);
-      int colId2 = Integer.parseInt(Id2[1]);
-      if (rowId1 != rowId2) return rowId1 - rowId2;
-      return colId1 - colId2;
     }
   }
 
@@ -161,7 +145,6 @@ public class PagerankMap2Prep extends Configured implements Tool {
         extends Reducer<Text, Text, Text, byte[]> {
 
     int blockSize = 1;
-    MatComparator mc = new MatComparator();
 
     public void setup(Context context) 
         throws IOException, InterruptedException {
@@ -192,7 +175,10 @@ public class PagerankMap2Prep extends Configured implements Tool {
         }
       }
 
-      context.write(key, out.toByteArray());
+      String[] keyStrings = key.toString().split("\t");
+      Text newKey = new Text(keyStrings[0] + "\t" + keyStrings[1] + "\t" + 
+                             keyStrings[2]);
+      context.write(newKey, out.toByteArray());
     }
   }
 
@@ -238,7 +224,11 @@ public class PagerankMap2Prep extends Configured implements Tool {
     }
 
     conf = getConf();
+    if (conf == null) {
+      conf = new Configuration();
+    }
     conf.addResource("pagerank-conf.xml");
+    setConf(conf);
     checkValidity();
 
     setPaths(args[0], args[1], args[2]);
@@ -271,7 +261,7 @@ public class PagerankMap2Prep extends Configured implements Tool {
   }
 
   public void initNodes() throws Exception {
-    Configuration conf = new Configuration();
+    conf = getConf();
     if (conf == null) {
       conf = new Configuration();
       setConf(conf);
@@ -282,7 +272,7 @@ public class PagerankMap2Prep extends Configured implements Tool {
     FileSystem fs = FileSystem.get(conf);
     fs.delete(blkNodePath, true);
 
-    int blockSize = conf.getInt("pagerank.block.size", 1);
+    int numBlocks = conf.getInt("pagerank.num.col.blocks", 1);
     int numNodes = conf.getInt("pagerank.num.nodes", 1);
     Path[] localPath = {
       new Path("/tmp/initialNodeRank"), 
@@ -297,7 +287,6 @@ public class PagerankMap2Prep extends Configured implements Tool {
     int prevOff = 0;
     int currOff = 0;
 
-    int numBlocks = numNodes / blockSize;
     int left = numNodes - numBlocks * (numNodes / numBlocks);
     for (int i = 0; i < numBlocks; ++i) {
       String blockId = "node" + "\t" + i;
@@ -375,6 +364,7 @@ public class PagerankMap2Prep extends Configured implements Tool {
     job.setOutputKeyClass(Text.class);
     job.setOutputValueClass(byte[].class);
     job.setOutputFormatClass(MatBlockOutputFormat.class);
+    job.setPartitionerClass(PagerankMap2Partitioner.class);
     FileInputFormat.setInputPaths(job, tmpPath);
     FileOutputFormat.setOutputPath(job, blkEdgePath);
     return job;
@@ -386,6 +376,24 @@ public class PagerankMap2Prep extends Configured implements Tool {
     protected <K, V> String generateIndexForKeyValue(
         K key, V value, String path) {
       return  key.toString();
+    }
+  }
+
+  public static class PagerankMap2Partitioner<K, V>
+        extends Partitioner<K, V> {
+
+    @Override
+    public int getPartition(K key, V value, int numReduceTasks) {
+      try {
+        String[] keyStrings = key.toString().split("\t");
+        int blockRowId = Integer.parseInt(keyStrings[1]);
+        int blockColId = Integer.parseInt(keyStrings[2]);
+        int numBlocks = Integer.parseInt(keyStrings[3]);
+        return (blockRowId * numBlocks + blockColId) % numReduceTasks;
+      }
+      catch (Exception e) {
+        return (key.hashCode() & Integer.MAX_VALUE) % numReduceTasks;
+      }
     }
   }
 
