@@ -187,6 +187,9 @@ public class PagerankMap2Prep extends Configured implements Tool {
         bbuf.putInt(srcId);
         bbuf.putDouble(prob);
         out.write(bbuf.array());
+        if ((out.size() % (5 * 1024 * 1024) == 0)) {
+          context.setStatus("out size: " + out.size());
+        }
       }
 
       context.write(key, out.toByteArray());

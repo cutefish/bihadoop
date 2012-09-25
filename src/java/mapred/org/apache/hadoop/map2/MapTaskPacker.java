@@ -331,8 +331,8 @@ public class MapTaskPacker {
                                                Segments dynamicCache, 
                                                long cacheSize, 
                                                int clusterSize) {
-    maxPackSize = totalNumMaps / clusterSize + 
-        ((totalNumMaps % clusterSize == 0) ? 0 : 1);
+    maxPackSize = totalNumMaps / clusterSize;
+    maxPackSize = (maxPackSize == 0) ? 1 : maxPackSize;
 
     long start = System.currentTimeMillis();
 
