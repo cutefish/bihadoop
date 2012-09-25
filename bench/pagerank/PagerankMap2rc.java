@@ -1,17 +1,17 @@
+
 package bench.pagerank;
 
-import java.io.ByteArrayOutputStream;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
@@ -47,7 +47,7 @@ import org.apache.hadoop.map2.*;
  *
  */
 
-public class PagerankMap2 extends Configured implements Tool {
+public class PagerankMap2rc extends Configured implements Tool {
 
   protected static enum PrCounters { CONVERGE_CHECK }
 
@@ -60,7 +60,8 @@ public class PagerankMap2 extends Configured implements Tool {
         extends Mapper<String[], TrackedSegments,
                         Text, BytesWritable> {
     FileSystem fs;
-    int numBlocks;
+    int numRowBlocks;
+    int numColBlocks;
     int numNodes;
     boolean useCache;
 
@@ -69,7 +70,8 @@ public class PagerankMap2 extends Configured implements Tool {
       Configuration conf = context.getConfiguration();
       fs = FileSystem.get(conf);
       numNodes = conf.getInt("pagerank.num.nodes", 1);
-      numBlocks = conf.getInt("pagerank.num.col.blocks", -1);
+      numRowBlocks = conf.getInt("pagerank.num.row.blocks", -1);
+      numColBlocks = conf.getInt("pagerank.num.col.blocks", -1);
       useCache = conf.getBoolean("pagerank.useCache", true);
     }
 
@@ -114,7 +116,12 @@ public class PagerankMap2 extends Configured implements Tool {
 
       int blockRowId = Integer.parseInt(indices[edgeIdx].split("\t")[1]);
       int blockColId = Integer.parseInt(indices[edgeIdx].split("\t")[2]);
-      int blockSize = numNodes / numBlocks + 1;
+      int left = numNodes - numColBlocks * (numNodes / numColBlocks);
+      int colBlockSize = numNodes / numColBlocks + 
+          ((blockColId < left) ? 1 : 0);
+      left = numNodes - numRowBlocks * (numNodes / numRowBlocks);
+      int rowBlockSize = numNodes / numRowBlocks + 
+          ((blockRowId < left) ? 1 : 0);
 
       FSDataInputStream in;
       DataInputStream dataIn;
@@ -127,12 +134,11 @@ public class PagerankMap2 extends Configured implements Tool {
       context.setStatus("reading node vector: " + indices[nodeIdx] + 
                         " nodeSgmt: " + nodeSgmt);
 
-      int count;
       /**
        * We store the previous rank in a array then combine them into a byte
-       * array.
+       * array, every node has a rank.
        */
-      double[] prevRank = new double[blockSize];
+      double[] prevRank = new double[colBlockSize];
       start = System.currentTimeMillis();
       if (useCache) {
         in = fs.openCachedReadOnly(nodeSgmt.getPath(), nodeVersionId);
@@ -144,26 +150,24 @@ public class PagerankMap2 extends Configured implements Tool {
       dataIn = new DataInputStream(new BufferedInputStream(in));
 
       int bytesRead = 0;
-      count = 0;
       while(bytesRead < nodeSgmt.getLength()) {
         int rowId = dataIn.readInt();
+        int idInBlock = rowId / numColBlocks;
         double rank = dataIn.readDouble();
-        int rowIdInBlock = rowId / numBlocks;
-        prevRank[rowIdInBlock] = rank;
+        prevRank[idInBlock] = rank;
         bytesRead += (4 + 8);
-        count ++;
       }
       //we add a header ahead of buffer to distinguish between previous and
       //current value
       ByteBuffer bbuf;
       if (blockRowId == 0) {
-        bbuf = ByteBuffer.allocate(count * 12 + 4);
+        bbuf = ByteBuffer.allocate(colBlockSize * 12 + 4);
         bbuf.put((byte)0x55);
         bbuf.put((byte)0x00);
         bbuf.put((byte)0x55);
         bbuf.put((byte)0x00);
-        count = 0;
-        for (int i = blockColId; i < numNodes; i += numBlocks) {
+        int count = 0;
+        for (int i = blockColId; i < numNodes; i += numColBlocks) {
           bbuf.putInt(i);
           bbuf.putDouble(prevRank[count]);
           count ++;
@@ -175,10 +179,12 @@ public class PagerankMap2 extends Configured implements Tool {
       System.out.println("Processed node " + bytesRead + " byte in " + (end - start) + " ms");
       System.out.println("Node processing bandwidth: " + bytesRead / (end - start) / 1000 + " MByte/s");
 
-
       // read edge matrix
       context.setStatus("reading edge matrix: " + indices[edgeIdx] + 
                         " edgeSgmt: " + edgeSgmt);
+      double[] rankArray = new double[rowBlockSize];
+      //identify zero xferProb to shrink the output size
+      Arrays.fill(rankArray, -10.0);
       start = System.currentTimeMillis();
       if (useCache) {
         in = fs.openCachedReadOnly(edgeSgmt.getPath(), edgeVersionId);
@@ -189,9 +195,6 @@ public class PagerankMap2 extends Configured implements Tool {
       in.seek(edgeSgmt.getOffset());
       dataIn = new DataInputStream(new BufferedInputStream(in));
 
-      double[] rankArray = new double[blockSize];
-      Arrays.fill(rankArray, -10.0);
-
       bytesRead = 0;
       while (bytesRead < edgeSgmt.getLength()) {
         int rowId, colId, colIdInBlock;
@@ -201,38 +204,53 @@ public class PagerankMap2 extends Configured implements Tool {
           colId = dataIn.readInt();
           xferProb = dataIn.readDouble();
           bytesRead += 4 + 4 + 8;
-          colIdInBlock = colId / numBlocks;
+          colIdInBlock = colId / numColBlocks;
           double rank = prevRank[colIdInBlock];
           partialRank = xferProb * rank;
 
-          int rowIdInBlock = rowId / numBlocks;
+          int rowIdInBlock = rowId / numRowBlocks;
           rankArray[rowIdInBlock] += partialRank;
         }
         catch (Exception e) {
           System.out.println("" + e + ", on bytesRead: " + bytesRead);
         }
       }
+      in.close();
 
-      ByteArrayOutputStream out = new ByteArrayOutputStream();
+      HashMap<Integer, ByteArrayOutputStream> outMap = 
+          new HashMap<Integer, ByteArrayOutputStream>();
       byte[] header = new byte[] { 
         (byte) 0xff, (byte)0x00, (byte)0xff, (byte)0x00 };
-      out.write(header);
-      count = 0;
-      for (int i = blockRowId; i < numNodes; i += numBlocks) {
-        if (rankArray[i] > -1) {
-          ByteBuffer tmpBuf = ByteBuffer.allocate(4 + 8);
-          tmpBuf.putInt(i);
-          tmpBuf.putDouble(rankArray[count]);
-          out.write(tmpBuf.array());
-          tmpBuf.putInt(i);
-          tmpBuf.putDouble(rankArray[count]);
+
+      int count = 0;
+      for (int i = blockRowId; i < numNodes; i += numRowBlocks) {
+        if (rankArray[count] < -1) {
+          count ++;
+          continue;
         }
+
+        int newBlockId = i % numColBlocks;
+        ByteArrayOutputStream out = outMap.get(newBlockId);
+        if (out == null) {
+          out = new ByteArrayOutputStream();
+          out.write(header);
+          outMap.put(newBlockId, out);
+        }
+        ByteBuffer tmpBuf = ByteBuffer.allocate(4 + 8);
+        tmpBuf.putInt(i);
+        tmpBuf.putDouble(rankArray[count]);
+        out.write(tmpBuf.array());
         count ++;
       }
-      System.out.println("map output buffer length: " + out.size());
-      context.write(new Text("" + blockRowId),
-                    new BytesWritable(out.toByteArray()));
-      in.close();
+
+      //output ranks
+      for (Map.Entry<Integer, ByteArrayOutputStream> entry : outMap.entrySet()) {
+        int blockId = entry.getKey();
+        ByteArrayOutputStream out = entry.getValue();
+        byte[] outBytes = out.toByteArray();
+        System.out.println("map output buffer length: " + outBytes.length);
+        context.write(new Text("" + blockId), new BytesWritable(outBytes));
+      }
       end = System.currentTimeMillis();
       System.out.println("Processed edge " + bytesRead + " byte in " + (end - start) + " ms");
       System.out.println("Edge processing bandwidth: " + bytesRead / (end - start) / 1000 + " MByte/s");
@@ -255,7 +273,7 @@ public class PagerankMap2 extends Configured implements Tool {
 
     float alpha = 0;
     int numNodes = 0;
-    int numBlocks = 0;
+    int numColBlocks = 0;
     double threshold = 0.0001;
     boolean reportedChange = false;
 
@@ -264,7 +282,7 @@ public class PagerankMap2 extends Configured implements Tool {
         Configuration conf = context.getConfiguration();
         alpha = conf.getFloat("pagerank.alpha", 0.15f);
         numNodes = conf.getInt("pagerank.num.nodes", 1);
-        numBlocks = conf.getInt("pagerank.num.col.blocks", -1);
+        numColBlocks = conf.getInt("pagerank.num.col.blocks", -1);
         threshold = (double) conf.getFloat("pagerank.converge.threshold", 
                                            0.0001f);
     }
@@ -274,12 +292,13 @@ public class PagerankMap2 extends Configured implements Tool {
                        final Context context) 
         throws IOException, InterruptedException {
 
+      int blockColId = Integer.parseInt(key.toString());
+      int left = numNodes - numColBlocks * (numNodes / numColBlocks);
+      int colBlockSize = numNodes / numColBlocks + 
+          ((blockColId < left) ? 1 : 0);
+      double[] prevRank = new double[colBlockSize];
+      double[] currRank = new double[colBlockSize];
       int blockId = Integer.parseInt(key.toString());
-      int left = numNodes - numBlocks * (numNodes / numBlocks);
-      int blockSize = numNodes / numBlocks + 
-          ((blockId < left) ? 1 : 0);
-      double[] prevRank = new double[blockSize];
-      double[] currRank = new double[blockSize];
 
       for (BytesWritable val : values) {
         ByteBuffer bbuf = ByteBuffer.wrap(val.getBytes());
@@ -296,22 +315,24 @@ public class PagerankMap2 extends Configured implements Tool {
             (header[2] == (byte) 0x55) &&
             (header[3] == (byte) 0x00)) {
           //previous rank
-          for (int i = 0; i < blockSize; ++i) {
+          int size = (length - 4) / 12;
+          for (int i = 0; i < size; ++i) {
             int rowId = bbuf.getInt();
             double rank = bbuf.getDouble();
-            int rowIdInBlock = rowId / numBlocks;
-            prevRank[rowIdInBlock] = rank;
+            int idInBlock = rowId / numColBlocks;
+            prevRank[idInBlock] = rank;
           }
         }
         else if ((header[0] == (byte) 0xff) &&
                  (header[1] == (byte) 0x00) &&
                  (header[2] == (byte) 0xff) &&
                  (header[3] == (byte) 0x00)) {
-          for (int i = 0; i < blockSize; ++i) {
+          int size = (length - 4) / 12;
+          for (int i = 0; i < size; ++i) {
             int rowId = bbuf.getInt();
             double rank = bbuf.getDouble();
-            int rowIdInBlock = rowId / numBlocks;
-            currRank[rowIdInBlock] += rank;
+            int idInBlock = rowId / numColBlocks;
+            currRank[idInBlock] += rank;
           }
         }
         else {
@@ -322,11 +343,11 @@ public class PagerankMap2 extends Configured implements Tool {
 
       context.setStatus("Writing output");
 
-      ByteBuffer bbuf = ByteBuffer.allocate(blockSize * (4 + 8));
+      ByteBuffer bbuf = ByteBuffer.allocate(colBlockSize * (4 + 8));
       int total = currRank.length;
       int mileStore = total / 100;
       int count = 0;
-      for (int i = blockId; i < numNodes; i += numBlocks) {
+      for (int i = blockId; i < numNodes; i += numColBlocks) {
         double xferProb = currRank[count];
         double elemPrevRank = prevRank[count];
         //add the coefficients
@@ -334,6 +355,7 @@ public class PagerankMap2 extends Configured implements Tool {
         double elemCurrRank = (1 - alpha) * xferProb + alpha / numNodes;
         bbuf.putInt(i);
         bbuf.putDouble(elemCurrRank);
+        count ++;
         if (!reportedChange) {
           double diff = Math.abs(elemCurrRank - elemPrevRank);
           if (diff > threshold) {
@@ -344,7 +366,6 @@ public class PagerankMap2 extends Configured implements Tool {
         if ((mileStore != 0) && (count % mileStore == 0)) {
           context.progress();
         }
-        count ++;
       }
 
       context.write(new Text("node\t" + key), bbuf.array());
@@ -366,7 +387,7 @@ public class PagerankMap2 extends Configured implements Tool {
   public static void main(final String[] args) {
     try {
       final int result = ToolRunner.run(new Configuration(), 
-                                        new PagerankMap2(),
+                                        new PagerankMap2rc(),
                                         args);
       System.exit(result);
     }
@@ -377,7 +398,7 @@ public class PagerankMap2 extends Configured implements Tool {
   }
 
   protected static int printUsage() {
-    System.out.println("PagerankMap2 <edgePath> <outPath>");
+    System.out.println("PagerankMap2rc <edgePath> <outPath>");
     return -1;
   }
 
@@ -399,7 +420,7 @@ public class PagerankMap2 extends Configured implements Tool {
     initNodePath = new Path(edgePath.getParent(), "initialNodeRank");
     nodePath = new Path(edgePath.getParent(), "blknode");
 
-    PagerankMap2Prep prepare = new PagerankMap2Prep();
+    PagerankMap2rcPrep prepare = new PagerankMap2rcPrep();
     prepare.setPaths(edgePath.toString(), blkEdgePath.toString(),
                      initNodePath.toString());
 
@@ -413,7 +434,7 @@ public class PagerankMap2 extends Configured implements Tool {
       start = System.currentTimeMillis();
       prepare.blockEdges();
       end = System.currentTimeMillis();
-      System.out.println("===map2 experiment===<time>[PagerankMap2Prep]: " + 
+      System.out.println("===map2 experiment===<time>[PagerankMap2rcPrep]: " + 
                        (end - start) + " ms");
     }
     else {
@@ -427,7 +448,7 @@ public class PagerankMap2 extends Configured implements Tool {
         start = System.currentTimeMillis();
         prepare.blockEdges();
         end = System.currentTimeMillis();
-        System.out.println("===map2 experiment===<time>[PagerankMap2Prep]: " + 
+        System.out.println("===map2 experiment===<time>[PagerankMap2rcPrep]: " + 
                            (end - start) + " ms");
       }
     }
@@ -465,11 +486,11 @@ public class PagerankMap2 extends Configured implements Tool {
       fs.delete(nodePath);
       fs.rename(outPath, nodePath);
       long iterEnd = System.currentTimeMillis();
-      System.out.println("===map2 experiment===<iter time>[PagerankMap2Iterative]: " + 
+      System.out.println("===map2 experiment===<iter time>[PagerankMap2rcIterative]: " + 
                          (iterEnd - iterStart) + " ms");
     }
     end = System.currentTimeMillis();
-    System.out.println("===map2 experiment===<time>[PagerankMap2Iterative]: " + 
+    System.out.println("===map2 experiment===<time>[PagerankMap2rcIterative]: " + 
                        (end - start) + " ms");
 
     if (!converged) {
@@ -507,8 +528,8 @@ public class PagerankMap2 extends Configured implements Tool {
 
   private Job configStage0() throws Exception {
     int numReducers = conf.getInt("pagerank.num.reducers", 1);
-    Job job = new Job(conf, "PagerankMap2Stage0");
-    job.setJarByClass(PagerankMap2.class);
+    Job job = new Job(conf, "PagerankMap2rcStage0");
+    job.setJarByClass(PagerankMap2rc.class);
     job.setMapperClass(MapStage1.class);
     job.setReducerClass(RedStage1.class);
     job.setNumReduceTasks(numReducers);
@@ -526,8 +547,8 @@ public class PagerankMap2 extends Configured implements Tool {
 
   private Job configStage1() throws Exception {
     int numReducers = conf.getInt("pagerank.num.reducers", 1);
-    Job job = new Job(conf, "PagerankMap2Stage1");
-    job.setJarByClass(PagerankMap2.class);
+    Job job = new Job(conf, "PagerankMap2rcStage1");
+    job.setJarByClass(PagerankMap2rc.class);
     job.setMapperClass(MapStage1.class);
     job.setReducerClass(RedStage1.class);
     job.setNumReduceTasks(numReducers);

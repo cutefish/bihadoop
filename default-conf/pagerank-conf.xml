@@ -10,8 +10,13 @@
         <value>9695142</value>
     </property>
     <property>
-        <name>pagerank.block.size</name>
-        <value>2400000</value>
+        <name>pagerank.num.row.blocks</name>
+        <value>3</value>
+        <description>map2 block size</description>
+    </property>
+    <property>
+        <name>pagerank.num.col.blocks</name>
+        <value>8</value>
         <description>map2 block size</description>
     </property>
     -->
@@ -20,8 +25,13 @@
         <value>4847571</value>
     </property>
     <property>
-        <name>pagerank.block.size</name>
-        <value>1200000</value>
+        <name>pagerank.num.row.blocks</name>
+        <value>4</value>
+        <description>map2 block size</description>
+    </property>
+    <property>
+        <name>pagerank.num.col.blocks</name>
+        <value>4</value>
         <description>map2 block size</description>
     </property>
     <property>
@@ -35,8 +45,14 @@
         <value>16</value>
     </property>
     <property>
-        <name>pagerank.block.size</name>
+        <name>pagerank.num.row.blocks</name>
         <value>4</value>
+        <description>map2 block size</description>
+    </property>
+    <property>
+        <name>pagerank.num.col.blocks</name>
+        <value>4</value>
+        <description>map2 block size</description>
     </property>
     -->
     <property>

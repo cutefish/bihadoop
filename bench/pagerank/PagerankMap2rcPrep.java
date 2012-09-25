@@ -42,7 +42,7 @@ import org.apache.hadoop.map2.*;
  * The format of index file is
  * IDX_START | index | SEG_START | offset | len | IDX_END
  */
-public class PagerankMap2Prep extends Configured implements Tool {
+public class PagerankMap2rcPrep extends Configured implements Tool {
 
   /****************************************************************************
    * Stage 1.
@@ -100,14 +100,16 @@ public class PagerankMap2Prep extends Configured implements Tool {
   public static class MapStage2
         extends Mapper<Object, Text, Text, Text> {
 
-    int blockSize = 1;
-    int numNodes = 1;
+    int numNodes;
+    int numRowBlocks;
+    int numColBlocks;
     
     public void setup(Context context) 
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
       numNodes = conf.getInt("pagerank.num.nodes", -1);
-      blockSize = conf.getInt("pagerank.block.size", -1);
+      numRowBlocks = conf.getInt("pagerank.num.row.blocks", -1);
+      numColBlocks = conf.getInt("pagerank.num.col.blocks", -1);
     }
 
     public void map(final Object key, final Text value,
@@ -127,10 +129,8 @@ public class PagerankMap2Prep extends Configured implements Tool {
 
       int rowId = Integer.parseInt(line[0]);
       int colId = Integer.parseInt(line[1]);
-      int blockRowId = rowId %(numNodes / blockSize);
-      int blockColId = colId %(numNodes / blockSize);
-      //int blockRowId = rowId / blockSize;
-      //int blockColId = colId / blockSize;
+      int blockRowId = rowId % numRowBlocks;
+      int blockColId = colId % numColBlocks;
 
       Text newKey = new Text("edge" + "\t" + blockRowId + "\t" + blockColId);
 
@@ -139,35 +139,8 @@ public class PagerankMap2Prep extends Configured implements Tool {
     }
   }
 
-  static class MatComparator implements Comparator {
-    public int compare(Object o1, Object o2) {
-      String s1 = o1.toString();
-      String s2 = o2.toString();
-
-      String[] Id1 = s1.split("\t");
-      String[] Id2 = s2.split("\t");
-      if (Id1.length != 3) return 1;
-      if (Id2.length != 3) return -1;
-      int rowId1 = Integer.parseInt(Id1[0]);
-      int rowId2 = Integer.parseInt(Id2[0]);
-      int colId1 = Integer.parseInt(Id1[1]);
-      int colId2 = Integer.parseInt(Id2[1]);
-      if (rowId1 != rowId2) return rowId1 - rowId2;
-      return colId1 - colId2;
-    }
-  }
-
   public static class ReduceStage2
         extends Reducer<Text, Text, Text, byte[]> {
-
-    int blockSize = 1;
-    MatComparator mc = new MatComparator();
-
-    public void setup(Context context) 
-        throws IOException, InterruptedException {
-      Configuration conf = context.getConfiguration();
-      blockSize = conf.getInt("pagerank.block.size", -1);
-    }
 
     public void reduce(final Text key,
                        final Iterable<Text> values,
@@ -187,9 +160,6 @@ public class PagerankMap2Prep extends Configured implements Tool {
         bbuf.putInt(srcId);
         bbuf.putDouble(prob);
         out.write(bbuf.array());
-        if ((out.size() % (5 * 1024 * 1024) == 0)) {
-          context.setStatus("out size: " + out.size());
-        }
       }
 
       context.write(key, out.toByteArray());
@@ -209,9 +179,9 @@ public class PagerankMap2Prep extends Configured implements Tool {
   public static void main(final String[] args) {
     try {
       final int result = ToolRunner.run(new Configuration(), 
-                                        new PagerankMap2Prep(),
+                                        new PagerankMap2rcPrep(),
                                         args);
-      System.out.println("PagerankMap2Prep main return: " + result);
+      System.out.println("PagerankMap2rcPrep main return: " + result);
       return;
     }
     catch (Exception e) {
@@ -221,7 +191,7 @@ public class PagerankMap2Prep extends Configured implements Tool {
   }
 
   protected static int printUsage() {
-    System.out.println("PagerankMap2Prep " + 
+    System.out.println("PagerankMap2rcPrep " + 
                        "<edgePath> <blkedgePath> <initNodePath>");
     return -1;
   }
@@ -282,7 +252,7 @@ public class PagerankMap2Prep extends Configured implements Tool {
     FileSystem fs = FileSystem.get(conf);
     fs.delete(blkNodePath, true);
 
-    int blockSize = conf.getInt("pagerank.block.size", 1);
+    int numColBlocks = conf.getInt("pagerank.num.col.blocks", 1);
     int numNodes = conf.getInt("pagerank.num.nodes", 1);
     Path[] localPath = {
       new Path("/tmp/initialNodeRank"), 
@@ -297,15 +267,14 @@ public class PagerankMap2Prep extends Configured implements Tool {
     int prevOff = 0;
     int currOff = 0;
 
-    int numBlocks = numNodes / blockSize;
-    int left = numNodes - numBlocks * (numNodes / numBlocks);
-    for (int i = 0; i < numBlocks; ++i) {
+    int left = numNodes - numColBlocks * (numNodes / numColBlocks);
+    for (int i = 0; i < numColBlocks; ++i) {
       String blockId = "node" + "\t" + i;
-      int actualBlockSize = numNodes / numBlocks + ((i < left) ? 1 : 0);
+      int actualBlockSize = numNodes / numColBlocks + ((i < left) ? 1 : 0);
       int numBytes = actualBlockSize * (4 + 8);
       //allocate one int and one double for each element
       ByteBuffer bbuf = ByteBuffer.allocate(numBytes);
-      for (int j = i; j < numNodes; j += numBlocks) {
+      for (int j = i; j < numNodes; j += numColBlocks) {
         bbuf.putInt(j);
         bbuf.putDouble(1.0 / numNodes);
       }
@@ -334,10 +303,10 @@ public class PagerankMap2Prep extends Configured implements Tool {
   private void checkValidity() {
     int numRowBlocks = conf.getInt("pagerank.num.row.blocks", -1);
     if (numRowBlocks == -1) 
-      throw new IllegalArgumentException("block size not set");
+      throw new IllegalArgumentException("num of row blocks not set");
     int numColBlocks = conf.getInt("pagerank.num.col.blocks", -1);
     if (numColBlocks == -1) 
-      throw new IllegalArgumentException("block size not set");
+      throw new IllegalArgumentException("num of col blocks not set");
     int numNodes = conf.getInt("pagerank.num.nodes", -1);
     if (numNodes == -1) 
       throw new IllegalArgumentException("number of nodes not set");
@@ -352,8 +321,8 @@ public class PagerankMap2Prep extends Configured implements Tool {
   }
 
   private Job configStage1() throws Exception {
-    Job job = new Job(conf, "PagerankMap2Prep");
-    job.setJarByClass(PagerankMap2Prep.class);
+    Job job = new Job(conf, "PagerankMap2rcPrep");
+    job.setJarByClass(PagerankMap2rcPrep.class);
     job.setMapperClass(MapStage1.class);
     job.setReducerClass(ReduceStage1.class);
     job.setNumReduceTasks(conf.getInt("pagerank.num.reducers", 1));
@@ -365,8 +334,8 @@ public class PagerankMap2Prep extends Configured implements Tool {
   }
   
   private Job configStage2() throws Exception {
-    Job job = new Job(conf, "PagerankMap2PrepStage2");
-    job.setJarByClass(PagerankMap2Prep.class);
+    Job job = new Job(conf, "PagerankMap2rcPrepStage2");
+    job.setJarByClass(PagerankMap2rcPrep.class);
     job.setMapperClass(MapStage2.class);
     job.setReducerClass(ReduceStage2.class);
     job.setNumReduceTasks(conf.getInt("pagerank.num.reducers", 1));
@@ -389,68 +358,4 @@ public class PagerankMap2Prep extends Configured implements Tool {
     }
   }
 
-  //private static void genInitNodeRanks(Configuration conf,
-  //                                     Path outPath) throws Exception {
-  //  int blockSize = conf.getInt("pagerank.block.size", 1);
-  //  int numNodes = conf.getInt("pagerank.num.nodes", 1);
-  //  Path[] localPath = {
-  //    new Path("/tmp/initialNodeRank"), 
-  //    new Path("/tmp/initialNodeRank.map2idx")
-  //  };
-  //  FileOutputStream file = new FileOutputStream(localPath[0].toString());
-  //  DataOutputStream out = new DataOutputStream(file);
-  //  BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out));
-  //  FileOutputStream idxFile = new FileOutputStream(localPath[1].toString());
-  //  DataOutputStream idxOut = new DataOutputStream(idxFile);
-  //  int prevOff = 0;
-  //  int currOff = 0;
-  //  System.out.println("generating initial rank vector");
-  // // for (int i = 0; i < numNodes; i += blockSize) {
-  // //   //in each block write a block and an index
-  // //   int max = i + blockSize;
-  // //   String blockId = "node" + "\t" + i / blockSize;
-  // //   StringBuilder sb = new StringBuilder();
-  // //   for (int j = i; j < max; ++j) {
-  // //     sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");
-  // //   }
-  // //   out.writeBytes(sb.toString());
-  // //   currOff += sb.toString().length();
-  // //   idxOut.write(IndexingConstants.IDX_START);
-  // //   Text.writeString(idxOut, blockId);
-  // //   idxOut.write(IndexingConstants.SEG_START);
-  // //   idxOut.writeLong(prevOff);
-  // //   idxOut.writeLong(currOff - prevOff);
-  // //   idxOut.write(IndexingConstants.IDX_END);
-  // //   prevOff = currOff;
-  // //   System.out.print(".");
-  // // }
-  // // System.out.print("\n");
-
-  //  for (int i = 0; i < numNodes / blockSize; ++i) {
-  //    String blockId = "node" + "\t" + i;
-  //    StringBuilder sb = new StringBuilder();
-  //    for (int j = i; j < numNodes; j += numNodes / blockSize) {
-  //      sb.append("" + j + "\t" + 1 / (float)numNodes + "\n");
-  //    }
-  //    writer.write(sb.toString());
-  //    currOff += sb.toString().length();
-  //    idxOut.write(IndexingConstants.IDX_START);
-  //    Text.writeString(idxOut, blockId);
-  //    idxOut.write(IndexingConstants.SEG_START);
-  //    idxOut.writeLong(prevOff);
-  //    idxOut.writeLong(currOff - prevOff);
-  //    idxOut.write(IndexingConstants.IDX_END);
-  //    prevOff = currOff;
-  //    System.out.print(".");
-  //  }
-  //  System.out.print("\n");
-  //  writer.flush();
-  //  out.close();
-  //  idxOut.close();
-
-  //  //copy to hdfs
-  //  FileSystem fs = FileSystem.get(conf);
-  //  fs.mkdirs(outPath);
-  //  fs.copyFromLocalFile(false, true, localPath, outPath);
-  //}
 }
