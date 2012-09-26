@@ -134,7 +134,7 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
       int blockColId = colId % numColBlocks;
 
       Text newKey = new Text("edge" + "\t" + blockRowId + "\t" + blockColId + 
-                             "\t" + numColBlocks);
+                             "\t" + numRowBlocks);
 
       //key = blockId, value = value
       context.write(newKey, value);
