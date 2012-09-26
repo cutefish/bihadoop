@@ -227,8 +227,8 @@ public class PagerankSeqPrep extends Configured implements Tool {
     checkValidity();
 
     setPaths(args[0], args[1], args[2]);
-    blockEdges();
     initNodes();
+    blockEdges();
 
     return 1;
   }
@@ -270,6 +270,7 @@ public class PagerankSeqPrep extends Configured implements Tool {
     int numColBlocks = conf.getInt("pagerank.num.col.blocks", 1);
     int numNodes = conf.getInt("pagerank.num.nodes", 1);
 
+    SequenceFile.setCompressionType(conf, SequenceFile.CompressionType.NONE);
     SequenceFile.Writer out = SequenceFile.createWriter(
         fs, conf, blkNodePath, BytesWritable.class, BytesWritable.class);
 
@@ -292,6 +293,8 @@ public class PagerankSeqPrep extends Configured implements Tool {
       wvaluebytes.reset(new BytesWritable(valBuf.array()));
       out.appendRaw(keyBuf.array(), 0, 4, wvaluebytes);
       wvaluebytes.reset(null);
+      //out.append(new BytesWritable(keyBuf.array()),
+      //           new BytesWritable(valBuf.array()));
       System.out.print(".");
     }
     out.close();

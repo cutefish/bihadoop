@@ -36,12 +36,15 @@ import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.BytesWritable;
+import org.apache.hadoop.io.DataOutputBuffer;
 import org.apache.hadoop.io.WritableComparator;
+import org.apache.hadoop.io.WritableComparable;
 import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Counters;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Partitioner;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.SequenceFileAsBinaryInputFormat;
@@ -73,8 +76,11 @@ public class PagerankSeq extends Configured implements Tool {
       start = System.currentTimeMillis();
       if (key.getLength() == 4) {
         //node block, write an extra byte after key for secondary sorting
+        System.out.println("node bytes encountered. length: " + 
+                           value.getLength());
         ByteBuffer keyBuf = ByteBuffer.wrap(key.getBytes());
         int blockRowId = keyBuf.getInt();
+        System.out.println("map1 node blockId: " + blockRowId);
         ByteBuffer newKeyBuf = ByteBuffer.allocate(8);
         newKeyBuf.putInt(blockRowId);
         newKeyBuf.putInt(-1);
@@ -84,10 +90,13 @@ public class PagerankSeq extends Configured implements Tool {
         if (key.getLength() != 8) {
           throw new IOException("key size not correct: " + key.getLength());
         }
+        System.out.println("edge bytes encountered. length: " + 
+                           value.getLength());
         //edge block, write colId, rowId as key
         ByteBuffer keyBuf = ByteBuffer.wrap(key.getBytes());
         int blockRowId = keyBuf.getInt();
         int blockColId = keyBuf.getInt();
+        System.out.println("map1 edge blockId: " + blockRowId + "\t" + blockColId);
         ByteBuffer newKeyBuf = ByteBuffer.allocate(8);
         newKeyBuf.putInt(blockColId);
         newKeyBuf.putInt(blockRowId);
@@ -191,12 +200,12 @@ public class PagerankSeq extends Configured implements Tool {
       context.write(new BytesWritable(emitKeyBuf.array()),
                     new BytesWritable(emitValBuf.array()));
       //currProb, add 0 for key
-      emitKeyBuf = ByteBuffer.allocate(8);
-      emitKeyBuf.putInt(blockColId);
-      emitKeyBuf.putInt(0);
       for (int i = 0; i < numColBlocks; i++) {
         int blockSize = numNodes / numColBlocks + 
             ((i < left) ? 1 : 0);
+        emitKeyBuf = ByteBuffer.allocate(8);
+        emitKeyBuf.putInt(i);
+        emitKeyBuf.putInt(0);
         emitValBuf = ByteBuffer.allocate((4 + 8) * blockSize);
         for (int j = i; j < numNodes; j += numColBlocks) {
           emitValBuf.putInt(j);
@@ -341,13 +350,18 @@ public class PagerankSeq extends Configured implements Tool {
       super(BytesWritable.class, true);
     }
 
-    public int compare(byte[] b1, int s1, int l1,
-                       byte[] b2, int s2, int l2) {
+    public int compare(WritableComparable a, WritableComparable b) {
+      if ((! (a instanceof BytesWritable)) ||
+          (! (b instanceof BytesWritable))) {
+        return 0;
+      }
+      BytesWritable wa = (BytesWritable) a;
+      BytesWritable wb = (BytesWritable) b;
       ByteBuffer bbuf;
-      bbuf = ByteBuffer.wrap(b1);
+      bbuf = ByteBuffer.wrap(wa.getBytes());
       int colId1 = bbuf.getInt();
       int rowId1 = bbuf.getInt();
-      bbuf = ByteBuffer.wrap(b1);
+      bbuf = ByteBuffer.wrap(wb.getBytes());
       int colId2 = bbuf.getInt();
       int rowId2 = bbuf.getInt();
       if (colId1 != colId2) {
@@ -364,14 +378,39 @@ public class PagerankSeq extends Configured implements Tool {
       super(BytesWritable.class, true);
     }
 
-    public int compare(byte[] b1, int s1, int l1,
-                       byte[] b2, int s2, int l2) {
+    public int compare(WritableComparable a, WritableComparable b) {
+      if ((! (a instanceof BytesWritable)) ||
+          (! (b instanceof BytesWritable))) {
+        return 0;
+      }
+      BytesWritable wa = (BytesWritable) a;
+      BytesWritable wb = (BytesWritable) b;
       ByteBuffer bbuf;
-      bbuf = ByteBuffer.wrap(b1);
+      bbuf = ByteBuffer.wrap(wa.getBytes());
       int colId1 = bbuf.getInt();
-      bbuf = ByteBuffer.wrap(b1);
+      int rowId1 = bbuf.getInt();
+      bbuf = ByteBuffer.wrap(wb.getBytes());
       int colId2 = bbuf.getInt();
+      int rowId2 = bbuf.getInt();
       return colId1 - colId2;
+    }
+  }
+
+  public static class PrSeqPartitioner<K, V>
+        extends Partitioner<K, V> {
+    @Override
+    public int getPartition(K key, V value, int numReduceTasks) {
+      try {
+        BytesWritable wk = (BytesWritable) key;
+        ByteBuffer bbuf;
+        bbuf = ByteBuffer.wrap(wk.getBytes());
+        int colId = bbuf.getInt();
+        int rowId = bbuf.getInt();
+        return colId % numReduceTasks;
+      }
+      catch (Exception e) {
+        return (key.hashCode() & Integer.MAX_VALUE) % numReduceTasks;
+      }
     }
   }
 
@@ -583,6 +622,7 @@ public class PagerankSeq extends Configured implements Tool {
 		job.setReducerClass(RedStage1.class);
     job.setSortComparatorClass(PrSeqSortComparator.class);
     job.setGroupingComparatorClass(PrSeqGroupComparator.class);
+    job.setPartitionerClass(PrSeqPartitioner.class);
 
     job.setNumReduceTasks(numReducers);
 
@@ -591,7 +631,7 @@ public class PagerankSeq extends Configured implements Tool {
 
     job.setInputFormatClass(SequenceFileAsBinaryInputFormat.class);
     job.setOutputFormatClass(SequenceFileAsBinaryOutputFormat.class);
-		FileInputFormat.setInputPaths(job, edgePath, initNodePath);  
+		FileInputFormat.setInputPaths(job, blkEdgePath, initNodePath);  
 		FileOutputFormat.setOutputPath(job, tmpPath);  
 		return job;
   }
@@ -606,6 +646,7 @@ public class PagerankSeq extends Configured implements Tool {
 		job.setReducerClass(RedStage1.class);
     job.setSortComparatorClass(PrSeqSortComparator.class);
     job.setGroupingComparatorClass(PrSeqGroupComparator.class);
+    job.setPartitionerClass(PrSeqPartitioner.class);
 
     job.setNumReduceTasks(numReducers);
 
@@ -614,7 +655,7 @@ public class PagerankSeq extends Configured implements Tool {
 
     job.setInputFormatClass(SequenceFileAsBinaryInputFormat.class);
     job.setOutputFormatClass(SequenceFileAsBinaryOutputFormat.class);
-		FileInputFormat.setInputPaths(job, edgePath, nodePath);  
+		FileInputFormat.setInputPaths(job, blkEdgePath, nodePath);  
 		FileOutputFormat.setOutputPath(job, tmpPath);  
 		return job;
   }
@@ -629,6 +670,7 @@ public class PagerankSeq extends Configured implements Tool {
 		job.setReducerClass(RedStage2.class);
     job.setSortComparatorClass(PrSeqSortComparator.class);
     job.setGroupingComparatorClass(PrSeqGroupComparator.class);
+    job.setPartitionerClass(PrSeqPartitioner.class);
 
     job.setNumReduceTasks(numReducers);
 
@@ -681,13 +723,22 @@ public class PagerankSeq extends Configured implements Tool {
       SequenceFile.Reader in = new SequenceFile.Reader(fs, path, conf);
       BytesWritable key = new BytesWritable();
       BytesWritable val = new BytesWritable();
-      while(in.next(key, val)) {
+      DataOutputBuffer buffer = new DataOutputBuffer();
+      SequenceFile.ValueBytes vbytes = in.createValueBytes();
+      while(in.nextRawKey(buffer) != -1) {
+        key.set(buffer.getData(), 0, buffer.getLength());
+        buffer.reset();
+        in.nextRawValue(vbytes);
+        vbytes.writeUncompressedBytes(buffer);
+        val.set(buffer.getData(), 0, buffer.getLength());
+        buffer.reset();
         ByteBuffer valBuf = ByteBuffer.wrap(val.getBytes());
         int numBytes = val.getLength();
         while(numBytes > 0) {
           int rowId = valBuf.getInt();
           double rank = valBuf.getDouble();
-          out.writeChars("" + rowId + "\t" + rank + "\n");
+          out.write(("" + rowId + "\t" + rank + "\n").getBytes());
+          numBytes -= 4 + 8;
         }
       }
       in.close();
