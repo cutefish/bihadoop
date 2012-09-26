@@ -22,7 +22,9 @@ Version: 2.0
 
 package bench.pagerank;
 
+import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
@@ -31,9 +33,11 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileUtil;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.WritableComparator;
+import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Counters;
 import org.apache.hadoop.mapreduce.Job;
@@ -67,7 +71,7 @@ public class PagerankSeq extends Configured implements Tool {
 
       long start, end;
       start = System.currentTimeMillis();
-      if (key.getLength() == 1) {
+      if (key.getLength() == 4) {
         //node block, write an extra byte after key for secondary sorting
         ByteBuffer keyBuf = ByteBuffer.wrap(key.getBytes());
         int blockRowId = keyBuf.getInt();
@@ -77,7 +81,7 @@ public class PagerankSeq extends Configured implements Tool {
         context.write(new BytesWritable(newKeyBuf.array()), value);
       }
       else {
-        if (key.getLength() != 2) {
+        if (key.getLength() != 8) {
           throw new IOException("key size not correct: " + key.getLength());
         }
         //edge block, write colId, rowId as key
@@ -542,7 +546,8 @@ public class PagerankSeq extends Configured implements Tool {
       FileUtil.copy(fs, outPath, fs, nodePath, false, true, conf);
     }
     if (conf.getBoolean("pagerank.map2.toplaintxt", false)) {
-      waitForJobFinish(configStage25());
+      //waitForJobFinish(configStage25());
+      convertToPlainText();
     }
 		return 1;
   }
@@ -656,6 +661,38 @@ public class PagerankSeq extends Configured implements Tool {
 		FileInputFormat.setInputPaths(job, outPath);  
 		FileOutputFormat.setOutputPath(job, plainTextPath);  
 		return job;
+  }
+
+  public void convertToPlainText() throws Exception {
+    Configuration conf = getConf();
+    FileSystem fs = FileSystem.get(conf);
+    FileStatus[] files = fs.listStatus(outPath);
+    Path plainTxtPath = new Path(outPath, "plaintxt");
+    fs.delete(plainTxtPath);
+    DataOutputStream out = new DataOutputStream(
+        new BufferedOutputStream(fs.create(plainTxtPath)));
+    for (FileStatus file : files) {
+      Path path = file.getPath();
+      System.out.println("converting file " + path);
+      if (!path.toString().contains("part-r"))
+        continue;
+      if (path.toString().contains("map2idx"))
+        continue;
+      SequenceFile.Reader in = new SequenceFile.Reader(fs, path, conf);
+      BytesWritable key = new BytesWritable();
+      BytesWritable val = new BytesWritable();
+      while(in.next(key, val)) {
+        ByteBuffer valBuf = ByteBuffer.wrap(val.getBytes());
+        int numBytes = val.getLength();
+        while(numBytes > 0) {
+          int rowId = valBuf.getInt();
+          double rank = valBuf.getDouble();
+          out.writeChars("" + rowId + "\t" + rank + "\n");
+        }
+      }
+      in.close();
+    }
+    out.close();
   }
 
 }

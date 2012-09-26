@@ -17,6 +17,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.BytesWritable;
+import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
@@ -268,50 +269,35 @@ public class PagerankSeqPrep extends Configured implements Tool {
 
     int numColBlocks = conf.getInt("pagerank.num.col.blocks", 1);
     int numNodes = conf.getInt("pagerank.num.nodes", 1);
-    Path[] localPath = {
-      new Path("/tmp/initialNodeRank"), 
-      new Path("/tmp/initialNodeRank.map2idx")
-    };
 
-    BufferedOutputStream out = new BufferedOutputStream(
-        new FileOutputStream(localPath[0].toString()));
-    DataOutputStream idxOut = new DataOutputStream(
-        new FileOutputStream(localPath[1].toString()));
-
-    int prevOff = 0;
-    int currOff = 0;
+    SequenceFile.Writer out = SequenceFile.createWriter(
+        fs, conf, blkNodePath, BytesWritable.class, BytesWritable.class);
 
     int left = numNodes - numColBlocks * (numNodes / numColBlocks);
     for (int i = 0; i < numColBlocks; ++i) {
-      String blockId = "node" + "\t" + i;
+      //put key into byte[]
+      ByteBuffer keyBuf = ByteBuffer.allocate(4);
+      keyBuf.putInt(i);
+      //put value into byte[]
       int actualBlockSize = numNodes / numColBlocks + ((i < left) ? 1 : 0);
       int numBytes = actualBlockSize * (4 + 8);
       //allocate one int and one double for each element
-      ByteBuffer bbuf = ByteBuffer.allocate(numBytes);
+      ByteBuffer valBuf = ByteBuffer.allocate(numBytes);
       for (int j = i; j < numNodes; j += numColBlocks) {
-        bbuf.putInt(j);
-        bbuf.putDouble(1.0 / numNodes);
+        valBuf.putInt(j);
+        valBuf.putDouble(1.0 / numNodes);
       }
-      out.write(bbuf.array());
-      currOff += numBytes;
-      idxOut.write(IndexingConstants.IDX_START);
-      Text.writeString(idxOut, blockId);
-      idxOut.write(IndexingConstants.SEG_START);
-      idxOut.writeLong(prevOff);
-      idxOut.writeLong(currOff - prevOff);
-      idxOut.write(IndexingConstants.IDX_END);
-      prevOff = currOff;
+      SequenceFileAsBinaryOutputFormat.WritableValueBytes wvaluebytes = 
+          new SequenceFileAsBinaryOutputFormat.WritableValueBytes();
+      wvaluebytes.reset(new BytesWritable(valBuf.array()));
+      out.appendRaw(keyBuf.array(), 0, 4, wvaluebytes);
+      wvaluebytes.reset(null);
       System.out.print(".");
     }
     out.close();
-    idxOut.close();
     System.out.println("\n");
-
-    //copy to hdfs
-    fs = FileSystem.get(conf);
-    fs.mkdirs(blkNodePath);
-    fs.copyFromLocalFile(false, true, localPath, blkNodePath);
   }
+
 
     
   private void checkValidity() {
