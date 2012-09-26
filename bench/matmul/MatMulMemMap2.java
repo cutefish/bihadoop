@@ -80,6 +80,9 @@ public class MatMulMemMap2 {
 
       FSDataInputStream in;
       DataInputStream dataIn;
+
+      Configuration conf = context.getConfiguration();
+      long versionId = conf.getLong("matmul.versionId", 0);
       
       long start, end;
 
@@ -88,7 +91,7 @@ public class MatMulMemMap2 {
       double[] matrixBlockB = new double[sizeB];
       start = System.currentTimeMillis();
       if (useCache) {
-        in = fs.openCachedReadOnly(segB.getPath());
+        in = fs.openCachedReadOnly(segB.getPath(), versionId);
       }
       else {
         in = fs.open(segB.getPath());
@@ -106,7 +109,7 @@ public class MatMulMemMap2 {
 
       //do the multiplication
       if (useCache) {
-        in = fs.openCachedReadOnly(segA.getPath());
+        in = fs.openCachedReadOnly(segA.getPath(), versionId);
       }
       else {
         in = fs.open(segA.getPath());
@@ -232,6 +235,7 @@ public class MatMulMemMap2 {
     fs.delete(outPath);
 
     start = System.currentTimeMillis();
+    conf.setLong("matmul.versionId", start);
     waitForJobFinish(configStage());
     end = System.currentTimeMillis();
 

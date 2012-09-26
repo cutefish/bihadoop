@@ -84,12 +84,15 @@ public class MatMulIOMap2 {
       DataInputStream dataAIn;
       DataInputStream dataBIn = null;
       
+      Configuration conf = context.getConfiguration();
+      long versionId = conf.getLong("matmul.versionId", 0);
+      
       long start, end;
 
       //do the multiplication
       if (useCache) {
-        AIn = fs.openCachedReadOnly(segA.getPath());
-        BIn = fs.openCachedReadOnly(segB.getPath());
+        AIn = fs.openCachedReadOnly(segA.getPath(), versionId);
+        BIn = fs.openCachedReadOnly(segB.getPath(), versionId);
       }
       else {
         AIn = fs.open(segA.getPath());
@@ -226,6 +229,7 @@ public class MatMulIOMap2 {
     fs.delete(outPath);
 
     start = System.currentTimeMillis();
+    conf.setLong("matmul.versionId", start);
     waitForJobFinish(configStage());
     end = System.currentTimeMillis();
 
