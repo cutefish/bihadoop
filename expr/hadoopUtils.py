@@ -299,7 +299,7 @@ def _sshCmd(node, command):
     cmd = ("ssh -i /home/%s/pem/HadoopExpr.pem "
                "-o UserKnownHostsFile=/dev/null "
                "-o StrictHostKeyChecking=no "
-               "%s %s"
+               "-t %s %s"
                %(userName, node, command))
     subprocess.call(cmd.split(' '))
 
