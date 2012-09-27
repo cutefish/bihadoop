@@ -296,7 +296,11 @@ ssh cmd
 send a ssh command to all slaves
 """
 def _sshCmd(node, command):
-    cmd = 'ssh %s %s' %(node, command)
+    cmd = ("ssh -i /home/%s/pem/HadoopExpr.pem "
+               "-o UserKnownHostsFile=/dev/null "
+               "-o StrictHostKeyChecking=no "
+               "%s %s"
+               %(userName, node, command))
     subprocess.call(cmd.split(' '))
 
 def sshCmd(argv):
