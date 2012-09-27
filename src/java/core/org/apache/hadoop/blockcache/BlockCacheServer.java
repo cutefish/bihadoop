@@ -90,7 +90,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       throw new IOException(
           "Cannot set local cache dir at " + localCacheDir);
     }
-    cacheLocal = conf.getBoolean(CACHE_LOCAL, false);
+    cacheLocal = conf.getBoolean(CACHE_LOCAL, true);
 
     cache = new Cache();
     freeStoreThread = new Thread(freeStore);
@@ -681,7 +681,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
     LOG.debug("File location: " + host);
     InetSocketAddress bestAddr = NetUtils.createSocketAddr(host);
     boolean isLocal = false;
-    if (cacheLocal) {
+    if (!cacheLocal) {
       isLocal = isLocalAddress(bestAddr);
     }
     //put into cache
