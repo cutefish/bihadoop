@@ -347,13 +347,13 @@ public class PagerankSeqPrep extends Configured implements Tool {
     job.setOutputKeyClass(BytesWritable.class);
     job.setOutputValueClass(BytesWritable.class);
     job.setOutputFormatClass(SequenceFileAsBinaryOutputFormat.class);
-    job.setPartitionerClass(PagerankMap2Partitioner.class);
+    job.setPartitionerClass(PagerankSeqPartitioner.class);
     FileInputFormat.setInputPaths(job, tmpPath);
     FileOutputFormat.setOutputPath(job, blkEdgePath);
     return job;
   }
 
-  public static class PagerankMap2Partitioner<K, V>
+  public static class PagerankSeqPartitioner<K, V>
         extends Partitioner<K, V> {
 
     @Override
