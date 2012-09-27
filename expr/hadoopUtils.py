@@ -40,6 +40,7 @@ commandList = ["addConf",
                "quickSetup",
                "collectResult",
                "cleanupAll",
+               "sshcmd",
               ]
 
 def printUsage():
@@ -62,6 +63,8 @@ def run(argv):
         collectResult(argv[1:])
     elif (argv[0] == 'cleanupAll'):
         cleanupAll(argv[1:])
+    elif (argv[0] == 'sshcmd'):
+        sshCmd(argv[1:])
     else:
         printUsage()
 
@@ -287,6 +290,23 @@ def cleanupAll(argv):
                    %(userName, slave, userName, userName))
         print command
         subprocess.call(command.split(' '));
+
+"""
+ssh cmd
+send a ssh command to all slaves
+"""
+def _sshCmd(node, command):
+    cmd = 'ssh %s %s' %(node, command)
+    subprocess.call(cmd.split(' '))
+
+def sshCmd(argv):
+    if (len(argv) != 1):
+        print "sshcmd <command>"
+        sys.exit(-1)
+    command = argv[0]
+    slaves = fileToList('/home/%s/hadoop/hadoop-1.0.3/conf/slaves' %userName)
+    for slave in slaves:
+        _sshCmd(slave, command)
 
 
 if __name__ == '__main__':
