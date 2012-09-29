@@ -366,8 +366,13 @@ public class MapTaskPacker {
     //actually select form the join set
     // use a portion of the cache for the join set.
     Set<Segment> chosenJoinSet = new TreeSet<Segment>();
+    int expectJoinSetSize = (int)Math.sqrt(maxPackSize);
+    int joinSetSize = 0;
     for(Segment seg : largestSet) {
       chosenJoinSet.add(seg);
+      joinSetSize ++;
+      if (joinSetSize >= expectJoinSetSize)
+        break;
       CoverInfo info = staticCache.cover(seg);
       if (info.leftSize == 0) { 
         continue;
