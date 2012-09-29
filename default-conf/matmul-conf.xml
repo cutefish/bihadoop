@@ -5,20 +5,20 @@
 
 <configuration>
     <property>
-        <name>matmul.num.row.blocks</name>
-        <value>12</value>
+        <name>matmul.num.a.row.blocks</name>
+        <value>3</value>
     </property>
     <property>
-        <name>matmul.num.col.blocks</name>
-        <value>1</value>
+        <name>matmul.num.b.col.blocks</name>
+        <value>4</value>
+    </property>
+    <property>
+        <name>matmul.block.size</name>
+        <value>10000</value>
     </property>
     <property>
         <name>matmul.num.rows.in.block</name>
         <value>100</value>
-    </property>
-    <property>
-        <name>matmul.num.cols.in.block</name>
-        <value>10000</value>
     </property>
     <property>
         <name>matmul.initialize</name>

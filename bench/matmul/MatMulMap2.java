@@ -1,42 +1,23 @@
 package bench.matmul;
 
-import java.io.BufferedReader;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
-import java.io.EOFException;
-import java.io.InputStreamReader;
 import java.io.IOException;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.TreeMap;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.FileUtil;
-import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.BytesWritable;
-import org.apache.hadoop.io.Text;
-import org.apache.hadoop.mapred.JobClient;
-import org.apache.hadoop.mapreduce.Counters;
+import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
-import org.apache.hadoop.map2.IndexedTextOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.MultipleOutputs;
+import org.apache.hadoop.mapreduce.lib.output.SequenceFileAsBinaryOutputFormat;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.hadoop.util.Tool;
@@ -44,9 +25,11 @@ import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.map2.*;
 
-public class MatMulMemMap2 {
+public class MatMulMap2 {
+
   public static class MapStage
-        extends Mapper<String[], TrackedSegments, Text, BytesWritable> {
+        extends Mapper<String[], TrackedSegments, 
+                        NullWritable, NullWritable> {
 
     FileSystem fs;
     int numRowsInBlock;
@@ -57,8 +40,9 @@ public class MatMulMemMap2 {
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
       fs = FileSystem.get(conf);
+      int blockSize = conf.getInt("matmul.block.size", 1);
       numRowsInBlock = conf.getInt("matmul.num.rows.in.block", 1);
-      numColsInBlock = conf.getInt("matmul.num.cols.in.block", 1);
+      numColsInBlock = blockSize / numRowsInBlock;
       useCache = conf.getBoolean("matmul.useCache", true);
     }
 
@@ -74,6 +58,7 @@ public class MatMulMemMap2 {
       else {
         AIdx = 1; BIdx = 0;
       }
+
       Segment[] segments = trSegs.segments;
       Segment segA = segments[AIdx];
       Segment segB = segments[BIdx];
@@ -86,9 +71,9 @@ public class MatMulMemMap2 {
       
       long start, end;
 
-      //read the first segment into memory
-      int sizeB = numRowsInBlock * numColsInBlock;
-      double[] matrixBlockB = new double[sizeB];
+      //read the B segment into memory
+      int size = numRowsInBlock * numColsInBlock;
+      double[] matrixBlockB = new double[size];
       start = System.currentTimeMillis();
       if (useCache) {
         in = fs.openCachedReadOnly(segB.getPath(), versionId);
@@ -98,14 +83,24 @@ public class MatMulMemMap2 {
       }
       in.seek(segB.getOffset());
       dataIn = new DataInputStream(new BufferedInputStream(in));
-      for (int i = 0; i < sizeB; ++i) {
+      for (int i = 0; i < size; ++i) {
         matrixBlockB[i] = dataIn.readDouble();
       }
       in.close();
       end = System.currentTimeMillis();
       System.out.println("matrixB read time: " + (end - start) + " ms");
       System.out.println("matrixB read bandwidth: " + 
-                         sizeB * 8 / (end - start) / 1000 + " MBytes/s");
+                         size * 8 / (end - start) / 1000 + " MBytes/s");
+
+      //prepare for context write
+      String CRowId = indices[AIdx].split("_")[2];
+      String CColId = indices[BIdx].split("_")[2];
+      String outName = "C_" + CRowId + "_" + CColId;
+      Path outPath = new Path(FileOutputFormat.getWorkOutputPath(context), 
+                              outName);
+      BufferedOutputStream out = new BufferedOutputStream(
+          fs.create(outPath));
+      DataOutputStream dataOut = new DataOutputStream(out);
 
       //do the multiplication
       if (useCache) {
@@ -116,8 +111,6 @@ public class MatMulMemMap2 {
       }
       in.seek(segA.getOffset());
       dataIn = new DataInputStream(new BufferedInputStream(in));
-      ByteBuffer outbuf = ByteBuffer.allocate(
-          numRowsInBlock * numRowsInBlock * 8);
       long readTime = 0, calcTime = 0;
       for (int i = 0; i < numRowsInBlock; ++i) {
         double[] rowA = new double[numColsInBlock];
@@ -136,61 +129,19 @@ public class MatMulMemMap2 {
           for (int k = 0; k < numColsInBlock; ++k) {
             sum += rowA[k] * matrixBlockB[j * numColsInBlock + k];
           }
-          outbuf.putDouble(sum);
+          dataOut.writeDouble(sum);
         }
         end = System.currentTimeMillis();
         calcTime += end - start;
       }
       in.close();
+      dataOut.close();
       System.out.println("matrixA read time: " + readTime + " ms");
       System.out.println("matrixA read bandwidth: " + 
-                         sizeB * 8 / readTime / 1000 + " MBytes/s");
+                         size * 8 / readTime / 1000 + " MBytes/s");
       System.out.println("multiplication calc time: " + calcTime + " ms");
-
-      //prepare for context write
-      String[] Aindices = indices[AIdx].split("_");
-      String[] Bindices = indices[BIdx].split("_");
-      String rowIdx = Aindices[2];
-      String colIdx = Bindices[4];
-
-      context.write(new Text(rowIdx + "\t" + colIdx),
-                    new BytesWritable(outbuf.array()));
-    }
-  }
-
-  public static class RedStage
-        extends Reducer<Text, BytesWritable, Text, byte[]> {
-
-    int numRowsInBlock;
-
-    public void setup(Context context) 
-        throws IOException, InterruptedException {
-      Configuration conf = context.getConfiguration();
-      numRowsInBlock = conf.getInt("matmul.num.rows.in.block", 1);
     }
 
-    public void reduce(final Text key,
-                       final Iterable<BytesWritable> values,
-                       final Context context)
-        throws IOException, InterruptedException {
-
-      int size = numRowsInBlock * numRowsInBlock;
-      double[] out = new double[size];
-      ByteBuffer outBuf = ByteBuffer.allocate(size *8);
-      for (BytesWritable val: values) {
-        ByteBuffer buf = ByteBuffer.wrap(val.getBytes());
-        outBuf.rewind();
-        for (int i = 0; i < size; ++i) {
-          outBuf.mark();
-          double curr = outBuf.getDouble();
-          curr += buf.getDouble();
-          outBuf.reset();
-          outBuf.putDouble(curr);
-        }
-      }
-
-      context.write(key, outBuf.array());
-    }
   }
 
   /****************************************************************************
@@ -198,12 +149,14 @@ public class MatMulMemMap2 {
    ***************************************************************************/
 
   protected Path inPath = null;
+  protected Path APath = null;
+  protected Path BPath = null;
   protected Path outPath = null;
   Configuration conf;
 
   public static void main(final String[] args) {
     try {
-      MatMulMemMap2 mmm = new MatMulMemMap2();
+      MatMulMap2 mmm = new MatMulMap2();
       mmm.run(args);
     }
     catch (Exception e) {
@@ -214,10 +167,12 @@ public class MatMulMemMap2 {
 
   public void run(String[] args) throws Exception {
     if (args.length != 2) {
-      System.out.println("MatMulMemMap2 <inPath> <outPath>");
+      System.out.println("MatMulMap2 <inPath> <outPath>");
       System.exit(-1);
     }
     inPath = new Path(args[0]);
+    APath = new Path(inPath, "A");
+    BPath = new Path(inPath, "B");
     outPath = new Path(args[1]);
     conf = new Configuration();
     conf.addResource("matmul-conf.xml");
@@ -227,8 +182,8 @@ public class MatMulMemMap2 {
     //prepare
     if ((conf.getBoolean("matmul.initialize", true)) ||
         (!fs.exists(inPath))) {
-      MatMulPrep prep = new MatMulPrep();
-      prep.setPath(inPath);
+      MatMulMap2Prep prep = new MatMulMap2Prep();
+      prep.setPath(APath, BPath);
       prep.run();
     }
 
@@ -253,20 +208,16 @@ public class MatMulMemMap2 {
 
   private Job configStage() throws Exception {
     int numReducers = conf.getInt("matmul.num.reducers", 1);
-    Job job = new Job(conf, "MatMulMemMap2");
-    job.setJarByClass(MatMulMemMap2.class);
+    Job job = new Job(conf, "MatMulMap2");
+    job.setJarByClass(MatMulMap2.class);
     job.setMapperClass(MapStage.class);
-    job.setReducerClass(RedStage.class);
-    job.setNumReduceTasks(numReducers);
-    job.setMapOutputKeyClass(Text.class);
-    job.setMapOutputValueClass(BytesWritable.class);
-    job.setOutputKeyClass(Text.class);
-    job.setOutputValueClass(byte[].class);
+    job.setNumReduceTasks(0);
+    job.setOutputKeyClass(NullWritable.class);
+    job.setOutputValueClass(NullWritable.class);
     job.setInputFormatClass(Map2InputFormat.class);
     Map2InputFormat.setFileNameAsIndex(job);
     Map2InputFormat.setIndexFilter(job, MatMulMap2Filter.class);
-    Map2InputFormat.setInputPaths(job, inPath);
-    job.setOutputFormatClass(MatMulMap2OutputFormat.class);
+    Map2InputFormat.setInputPaths(job, "" + APath + "," + BPath);
     FileOutputFormat.setOutputPath(job, outPath);
     return job;
   }
@@ -274,35 +225,11 @@ public class MatMulMemMap2 {
 
   public static class MatMulMap2Filter implements Map2Filter {
     public boolean accept(String idx0, String idx1) {
-      String AIdx = null, BIdx = null;
-      if (idx0.contains("A")) AIdx = idx0;
-      if (idx0.contains("B")) BIdx = idx0;
-      if (idx1.contains("A")) AIdx = idx1;
-      if (idx1.contains("B")) BIdx = idx1;
-
-      if ((AIdx == null) || (BIdx == null)) return false;
-
-      String[] Aindices = AIdx.split("_");
-      String[] Bindices = BIdx.split("_");
-      if (Aindices.length != 5 || Bindices.length != 5) return false;
-      try {
-        int AColId = Integer.parseInt(Aindices[4]);
-        int BRowId = Integer.parseInt(Bindices[2]);
-        if (AColId == BRowId) return true;
-      }
-      catch(Exception e) {
-        return false;
+      if ((idx0.contains("A") && idx1.contains("B")) ||
+          (idx0.contains("B") && idx1.contains("A"))) {
+        return true;
       }
       return false;
-    }
-  }
-
-  public static class MatMulMap2OutputFormat<K, V>
-        extends IndexedByteArrayOutputFormat<K, V> {
-    @Override
-    protected <K, V> String generateIndexForKeyValue(
-        K key, V value, String path) {
-      return  key.toString();
     }
   }
 
