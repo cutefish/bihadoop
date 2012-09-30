@@ -32,5 +32,5 @@ else
 fi
 
 # start blockcache daemons
-"$bin"/hadoop-daemon.sh --config $HADOOP_CONF_DIR start blockcache
+"$bin"/hadoop-daemon.sh --config $HADOOP_CONF_DIR start blockcache 
 "$bin"/hadoop-daemons.sh --config $HADOOP_CONF_DIR start blockcache 

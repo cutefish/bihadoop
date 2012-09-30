@@ -2507,6 +2507,10 @@ public class JobInProgress {
       if (tip.isRunnable() && !tip.isRunning()) {
         return tip;
       }
+      else {
+        LOG.info("Pack task is not runable or running by someone else: " 
+                 + tip.idWithinJob());
+      }
     }
   }
 

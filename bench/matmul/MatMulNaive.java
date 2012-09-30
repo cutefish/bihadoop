@@ -51,24 +51,17 @@ public class MatMulNaive {
                     final Context context) 
         throws IOException, InterruptedException {
 
+      System.out.println("start map"); 
+
       ByteBuffer buf;
       buf = ByteBuffer.wrap(key.getBytes());
       int rowBlockId = buf.getInt();
+      System.out.println("Block B: " + rowBlockId);
+      int size = numRowsInBlock * numColsInBlock;
+      buf = ByteBuffer.wrap(value.getBytes());
+      buf.mark();
 
       long start, end;
-
-      //read the B segment into memory
-      int size = numRowsInBlock * numColsInBlock;
-      double[] matrixBlockB = new double[size];
-      buf = ByteBuffer.wrap(value.getBytes());
-      start = System.currentTimeMillis();
-      for (int i = 0; i < size; ++i) {
-        matrixBlockB[i] = buf.getDouble();
-      }
-      end = System.currentTimeMillis();
-      System.out.println("matrixB read time: " + (end - start) + " ms");
-      System.out.println("matrixB read bandwidth: " + 
-                         size * 8 / (end - start) / 1000 + " MBytes/s");
 
       //loop through all the A matrix and compute
       Configuration conf = context.getConfiguration();
@@ -106,11 +99,12 @@ public class MatMulNaive {
 
           //caclulate out[i, :]
           start = System.currentTimeMillis();
+          buf.reset();
           for (int j = 0; j < numRowsInBlock; ++j) {
             //calculate out [i, j]
             double sum = 0;
             for (int k = 0; k < numColsInBlock; ++k) {
-              sum += rowA[k] * matrixBlockB[j * numColsInBlock + k];
+              sum += rowA[k] * buf.getDouble();
             }
             dataOut.writeDouble(sum);
           }
@@ -151,7 +145,7 @@ public class MatMulNaive {
 
   public void run(String[] args) throws Exception {
     if (args.length != 2) {
-      System.out.println("MatMulMap2 <inPath> <outPath>");
+      System.out.println("MatMulNaive <inPath> <outPath>");
       System.exit(-1);
     }
     inPath = new Path(args[0]);
@@ -178,7 +172,7 @@ public class MatMulNaive {
     waitForJobFinish(configStage());
     end = System.currentTimeMillis();
 
-    System.out.println("===map2 experiment===<time>[MatMulMap2]: " + 
+    System.out.println("===map2 experiment===<time>[MatMulNaive]: " + 
                        (end - start) + " ms");
   }
 

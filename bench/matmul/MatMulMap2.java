@@ -50,6 +50,8 @@ public class MatMulMap2 {
                     final TrackedSegments trSegs,
                     final Context context) 
         throws IOException, InterruptedException {
+      
+      System.out.println("working on: " + indices[0] + "\t" + indices[1]);
 
       int AIdx = 0, BIdx = 0;
       if (indices[0].contains("A")) {
