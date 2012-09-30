@@ -210,6 +210,7 @@ public class MatMulMap2 {
 
   private Job configStage() throws Exception {
     int numReducers = conf.getInt("matmul.num.reducers", 1);
+    int packSizeHint = conf.getInt("matmul.pack.size.hint", -1);
     Job job = new Job(conf, "MatMulMap2");
     job.setJarByClass(MatMulMap2.class);
     job.setMapperClass(MapStage.class);
@@ -220,6 +221,7 @@ public class MatMulMap2 {
     Map2InputFormat.setFileNameAsIndex(job);
     Map2InputFormat.setIndexFilter(job, MatMulMap2Filter.class);
     Map2InputFormat.setInputPaths(job, "" + APath + "," + BPath);
+    Map2InputFormat.setPackHint(job, packSizeHint, packSizeHint);
     FileOutputFormat.setOutputPath(job, outPath);
     return job;
   }
