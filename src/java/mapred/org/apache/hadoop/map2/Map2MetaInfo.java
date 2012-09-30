@@ -42,6 +42,8 @@ public class Map2MetaInfo {
   private Map<Segment, Segment> coverSegMap;
   private Map<SegmentPair, Integer> segTaskMap;
   private Map<String, List<Segment>> localityMap;
+  public int rowPackSize;
+  public int colPackSize;
 
   public Map2MetaInfo() {
     segList = new ArrayList<Segment[]>();
@@ -63,6 +65,8 @@ public class Map2MetaInfo {
       throw new IOException("Invalid header on map2 info file");
     }
 
+    rowPackSize = WritableUtils.readVInt(in);
+    colPackSize = WritableUtils.readVInt(in);
     int numSplits = WritableUtils.readVInt(in);
     for (int i = 0; i < numSplits; ++i) {
       int numSegs = WritableUtils.readVInt(in);

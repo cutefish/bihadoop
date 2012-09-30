@@ -85,7 +85,7 @@ public class JobSplitWriter {
         info);
     //Added by xyu40@gatech
     if (conf.getBoolean("mapred.map2.enabledMap2", false)) {
-      writeJobMap2MetaInfo(fs, 
+      writeJobMap2MetaInfo(fs, conf, 
                            JobSubmissionFiles.getJobMap2MetaFile(jobSubmitDir),
                            new FsPermission(
                                JobSubmissionFiles.JOB_FILE_PERMISSION),
@@ -217,6 +217,10 @@ public class JobSplitWriter {
   //Format:
   //
   //MAP2-INFO |
+  //
+  //ROWPACKSIZE
+  //COLPACKSIZE
+  //
   //NUM_SPLITS
   //NUM_SEGMENTS | 
   //SEGMENT; COVERSEGMENT; LOC1, LOC2, ...; |
@@ -226,10 +230,15 @@ public class JobSplitWriter {
   //SEGMENT; COVERSEGMENT; LOC1, LOC2, ...; |
   //SEGMENT; COVERSEGMENT; LOC1, LOC2, ...; |
   private static <T extends InputSplit> void writeJobMap2MetaInfo(
-      FileSystem fs, Path filename, FsPermission p, T[] splits) 
+      FileSystem fs, Configuration conf, 
+      Path filename, FsPermission p, T[] splits) 
       throws IOException{
     FSDataOutputStream out = FileSystem.create(fs, filename, p);
     out.write("MAP2-INFO".getBytes("UTF-8"));
+    int rowPackSize = conf.getInt("mapred.map2.input.row.pack.size", -1);
+    int colPackSize = conf.getInt("mapred.map2.input.col.pack.size", -1);
+    WritableUtils.writeVInt(out, rowPackSize);
+    WritableUtils.writeVInt(out, colPackSize);
     WritableUtils.writeVInt(out, splits.length);
     for (T inputSplit : splits) {
       Map2Split split = (Map2Split) inputSplit;

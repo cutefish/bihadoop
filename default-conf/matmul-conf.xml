@@ -25,7 +25,11 @@
         <value>true</value>
     </property>
     <property>
-        <name>pagerank.useCache</name>
+        <name>matmul.useCache</name>
         <value>false</value>
+    </property>
+    <property>
+        <name>matmul.pack.size.hint</name>
+        <value>4</value>
     </property>
 </configuration>

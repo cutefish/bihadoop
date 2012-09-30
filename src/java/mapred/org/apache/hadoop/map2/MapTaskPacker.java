@@ -42,6 +42,8 @@ public class MapTaskPacker {
   private List<List<Segment>> groups;
   private Map<Segment, TreeSet<Segment>> joinTable;
   private Map<Segment, Segment> coverMap;
+  private int rowPackSize;
+  private int colPackSize;
 
   public MapTaskPacker(Configuration conf) {
     this.conf = conf;
@@ -153,9 +155,13 @@ public class MapTaskPacker {
    * segment[0] and segment[1]
    */
   public void init(List<Segment[]> segList,
-                   Map<Segment, Segment> coverMap) {
+                   Map<Segment, Segment> coverMap,
+                   int rowPackSize,
+                   int colPackSize) {
 
     this.coverMap = coverMap;
+    this.rowPackSize = rowPackSize;
+    this.colPackSize = colPackSize;
 
     long start = System.currentTimeMillis();
 
@@ -327,6 +333,134 @@ public class MapTaskPacker {
    * hurt. The assumptions are that this function should be called not very
    * frequently and the cache size are not so large.
    */
+  //public synchronized Pack obtainLastLevelPack(Segments staticCache, 
+  //                                             Segments dynamicCache, 
+  //                                             long cacheSize, 
+  //                                             int clusterSize) {
+  //  maxPackSize = totalNumMaps / clusterSize;
+  //  maxPackSize = (maxPackSize == 0) ? 1 : maxPackSize;
+
+  //  long start = System.currentTimeMillis();
+
+  //  //no pack if no group.
+  //  if ((groups == null) || (groups.isEmpty())) return null;
+
+  //  LOG.debug("Generating a last level pack");
+  //  //select from the group with least local leftSize
+  //  //select from the largest join set.
+  //  List<CoverInfo> bestGroup = null;
+  //  if (dynamicCache.size() != 0) {
+  //    bestGroup = chooseGroup(dynamicCache, cacheSize, false);
+  //  }
+  //  if (bestGroup == null) {
+  //    bestGroup = chooseGroup(staticCache, cacheSize, true);
+  //  }
+  //  if (bestGroup == null) return null;
+  //  LOG.debug("Best Group size: " + bestGroup.size());
+  //  Set<Segment> largestSet = getLargestSet(bestGroup, cacheSize);
+  //  if (largestSet == null) return null;
+
+  //  int numPackedTasks = 0;
+  //  long sizeLeft;
+  //  boolean finished = false;
+  //  Pack newPack = new Pack();
+  //  Set<Segment> chosenSegments = new HashSet<Segment>();
+  //  float overCacheFactor = 
+  //      conf.getFloat("mapred.map2.taskPacker.overCacheFactor", 0.8f);
+  //  long usableCacheSize = (long)(cacheSize * overCacheFactor);
+  //  sizeLeft = usableCacheSize / 2;
+  //  //actually select form the join set
+  //  // use a portion of the cache for the join set.
+  //  Set<Segment> chosenJoinSet = new TreeSet<Segment>();
+  //  int expectJoinSetSize = (int)Math.sqrt(maxPackSize);
+  //  int joinSetSize = 0;
+  //  for(Segment seg : largestSet) {
+  //    chosenJoinSet.add(seg);
+  //    joinSetSize ++;
+  //    if (joinSetSize >= expectJoinSetSize)
+  //      break;
+  //    CoverInfo info = staticCache.cover(seg);
+  //    if (info.leftSize == 0) { 
+  //      continue;
+  //    }
+  //    //if staticCache does not cover that segment totally
+  //    //we need to cache a whole cover segment
+  //    Segment coverSeg = coverMap.get(seg);
+  //    if (coverSeg == null) {
+  //      LOG.error("Lack cover seg info for: " + seg);
+  //      continue;
+  //    }
+  //    if (sizeLeft - coverSeg.getLength() < 0) break;
+  //    sizeLeft -= coverSeg.getLength();
+  //    chosenSegments.add(coverSeg);
+  //  }
+  //  if (chosenJoinSet.isEmpty()) return null;
+
+  //  //start packing
+  //  sizeLeft += usableCacheSize / 2;
+  //  List<Segment[]> deleteList = new ArrayList<Segment[]>();
+
+  //  LOG.debug("Start packing");
+  //  //since the cover info in bestGroup is already ordered according to the
+  //  //locality, we can simply pop them out.
+  //  LOG.debug("staticCache: " + staticCache);
+  //  LOG.debug("dynamicCache: " + dynamicCache);
+
+  //  for (CoverInfo info : bestGroup) {
+  //    LOG.debug("cover info:" + info);
+  //    //we need to know if static cache can cover this segment
+  //    CoverInfo staticInfo = staticCache.cover(info.segment);
+  //    LOG.debug("static cover info:" + info);
+  //    Segment coverSeg = coverMap.get(info.segment);
+  //    //if it is not in the static and not in the dynamic and size too large
+  //    //skip.
+  //    if (staticInfo.leftSize != 0) {
+  //      if (!chosenSegments.contains(coverSeg))
+  //        if (sizeLeft - coverSeg.getLength() < 0)
+  //          continue;
+  //    }
+
+  //    LOG.debug("size left: " + sizeLeft);
+
+  //    //here we can add join set segments.
+  //    Set<Segment> join = joinTable.get(info.segment);
+  //    if (join == null) continue;
+
+  //    int count = 0;
+  //    for (Segment seg : chosenJoinSet) {
+  //      if (join.contains(seg)) {
+  //        newPack.addPair(info.segment, seg);
+  //        Segment[] toDelete = new Segment[2];
+  //        toDelete[0] = info.segment;
+  //        toDelete[1] = seg;
+  //        deleteList.add(toDelete);
+  //        numPackedTasks ++;
+  //        count ++;
+  //        if (numPackedTasks >= maxPackSize) {
+  //          LOG.debug("Reached pack size");
+  //          finished = true;
+  //          break;
+  //        }
+  //      }
+  //    }
+
+  //    if (count != 0) {
+  //      //at least one join segment is chosen
+  //      if (!chosenSegments.contains(coverSeg)) {
+  //        chosenSegments.add(coverSeg);
+  //        sizeLeft -= staticInfo.leftSize;
+  //      }
+  //    }
+
+  //    if (finished == true) break;
+  //  }
+
+  //  removePairs(deleteList);
+  //  long end = System.currentTimeMillis();
+  //  LOG.info("Finished last level packing in " + (end - start) + " ms " );
+  //  return newPack;
+  //}
+
   public synchronized Pack obtainLastLevelPack(Segments staticCache, 
                                                Segments dynamicCache, 
                                                long cacheSize, 
@@ -355,66 +489,28 @@ public class MapTaskPacker {
     if (largestSet == null) return null;
 
     int numPackedTasks = 0;
-    long sizeLeft;
-    boolean finished = false;
     Pack newPack = new Pack();
-    Set<Segment> chosenSegments = new HashSet<Segment>();
-    float overCacheFactor = 
-        conf.getFloat("mapred.map2.taskPacker.overCacheFactor", 0.8f);
-    long usableCacheSize = (long)(cacheSize * overCacheFactor);
-    sizeLeft = usableCacheSize / 2;
-    //actually select form the join set
-    // use a portion of the cache for the join set.
     Set<Segment> chosenJoinSet = new TreeSet<Segment>();
-    int expectJoinSetSize = (int)Math.sqrt(maxPackSize);
+    if (rowPackSize == -1) {
+      rowPackSize = (int)Math.sqrt(maxPackSize);
+    }
     int joinSetSize = 0;
     for(Segment seg : largestSet) {
       chosenJoinSet.add(seg);
       joinSetSize ++;
-      if (joinSetSize >= expectJoinSetSize)
+      if (joinSetSize >= rowPackSize)
         break;
-      CoverInfo info = staticCache.cover(seg);
-      if (info.leftSize == 0) { 
-        continue;
-      }
-      //if staticCache does not cover that segment totally
-      //we need to cache a whole cover segment
-      Segment coverSeg = coverMap.get(seg);
-      if (coverSeg == null) {
-        LOG.error("Lack cover seg info for: " + seg);
-        continue;
-      }
-      sizeLeft -= coverSeg.getLength();
-      chosenSegments.add(coverSeg);
-      if (sizeLeft < 0) break;
     }
     if (chosenJoinSet.isEmpty()) return null;
 
     //start packing
-    sizeLeft += usableCacheSize / 2;
     List<Segment[]> deleteList = new ArrayList<Segment[]>();
 
     LOG.debug("Start packing");
-    //since the cover info in bestGroup is already ordered according to the
-    //locality, we can simply pop them out.
-    LOG.debug("staticCache: " + staticCache);
-    LOG.debug("dynamicCache: " + dynamicCache);
 
+    int setSize = 0;
     for (CoverInfo info : bestGroup) {
-      LOG.debug("cover info:" + info);
-      //we need to know if static cache can cover this segment
-      CoverInfo staticInfo = staticCache.cover(info.segment);
-      LOG.debug("static cover info:" + info);
       Segment coverSeg = coverMap.get(info.segment);
-      //if it is not in the static and not in the dynamic and size too large
-      //skip.
-      if (staticInfo.leftSize != 0) {
-        if (!chosenSegments.contains(coverSeg))
-          if (sizeLeft - coverSeg.getLength() < 0)
-            continue;
-      }
-
-      LOG.debug("size left: " + sizeLeft);
 
       //here we can add join set segments.
       Set<Segment> join = joinTable.get(info.segment);
@@ -428,25 +524,15 @@ public class MapTaskPacker {
           toDelete[0] = info.segment;
           toDelete[1] = seg;
           deleteList.add(toDelete);
-          numPackedTasks ++;
           count ++;
-          if (numPackedTasks >= maxPackSize) {
-            LOG.debug("Reached pack size");
-            finished = true;
-            break;
-          }
         }
       }
-
       if (count != 0) {
-        //at least one join segment is chosen
-        if (!chosenSegments.contains(coverSeg)) {
-          chosenSegments.add(coverSeg);
-          sizeLeft -= staticInfo.leftSize;
+        setSize ++;
+        if (setSize >= rowPackSize) {
+          break;
         }
       }
-
-      if (finished == true) break;
     }
 
     removePairs(deleteList);
@@ -454,6 +540,7 @@ public class MapTaskPacker {
     LOG.info("Finished last level packing in " + (end - start) + " ms " );
     return newPack;
   }
+
 
   /**
    * Try to cover each group with cache. 

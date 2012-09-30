@@ -764,7 +764,9 @@ public class JobInProgress {
       LOG.info("map2 enabled on this job");
       map2Info.readMetaInfo(jobId, fs, conf, jobSubmitDir);
       map2TaskPacker.init(map2Info.getSegmentList(),
-                          map2Info.getCoverMap());
+                          map2Info.getCoverMap(), 
+                          map2Info.rowPackSize,
+                          map2Info.colPackSize);
     }
     //end xyu40@gatech.edu
 

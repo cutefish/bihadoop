@@ -246,4 +246,11 @@ public class Map2InputFormat
     return new Map2RecordReader();
   }
 
+  public static void setPackHint(JobContext context, 
+                                  int rowPackSize, int colPackSize) {
+    Configuration conf = context.getConfiguration();
+    conf.setInt("mapred.map2.input.row.pack.size", rowPackSize);
+    conf.setInt("mapred.map2.input.col.pack.size", colPackSize);
+  }
+
 }
