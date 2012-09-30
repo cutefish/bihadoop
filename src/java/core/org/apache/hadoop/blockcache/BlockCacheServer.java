@@ -413,7 +413,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
         }
         Block key = new Block(path, startOffset, length, useReplica, "");
         blockQueue.addLast(key);
-        if (!useReplica)
+        if (cacheLocal || !useReplica)
           currSize += length;
         return true;
       }
