@@ -59,7 +59,10 @@ public class MatMulNaive {
       System.out.println("Block B: " + rowBlockId);
       int size = numRowsInBlock * numColsInBlock;
       buf = ByteBuffer.wrap(value.getBytes());
-      buf.mark();
+      double[] matrixBlockB = new double[size];
+      for (int i = 0; i < size; ++i) {
+        matrixBlockB[i] = buf.getDouble();
+      }
 
       long start, end;
 
@@ -99,12 +102,11 @@ public class MatMulNaive {
 
           //caclulate out[i, :]
           start = System.currentTimeMillis();
-          buf.reset();
           for (int j = 0; j < numRowsInBlock; ++j) {
             //calculate out [i, j]
             double sum = 0;
             for (int k = 0; k < numColsInBlock; ++k) {
-              sum += rowA[k] * buf.getDouble();
+              sum += rowA[k] * matrixBlockB[j * numColsInBlock + k];
             }
             dataOut.writeDouble(sum);
           }
