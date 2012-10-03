@@ -206,7 +206,7 @@ public class FakeDistributedSystem {
     Map<Integer, Pack> memoryPackCache = new HashMap<Integer, Pack>();
     Map<Integer, Pack> diskPackCache = new HashMap<Integer, Pack>();
     MapTaskPacker packer = new MapTaskPacker(conf);
-    packer.init(job.getTaskList(), null);
+    packer.init(job.getTaskList(), null, 0, 0);
     if (packer.numGroups() > 4) {
       LOG.info(packer.groupsToString());
     }
