@@ -13,6 +13,7 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.mapreduce.Counters;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
@@ -26,20 +27,23 @@ public class SingleFileBandwidth {
   protected static enum PerfCounters { TIME_SPENT, BYTES_READ }
 
   public static class MapStage
-        extends Mapper<Text, Text, 
+        extends Mapper<LongWritable, Text, 
                         NullWritable, NullWritable> {
 
     FileSystem fs;
     Path path;
+    long size;
 
     public void setup(Context context) 
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
-      fs = FileSystem.get(conf);
       Path path = new Path(conf.get("bandwidth.file.name"));
+      fs = FileSystem.get(path.toUri(), conf);
+      size = conf.getLong("bandwidth.read.size", 100*1024*1024);
+
     }
 
-    public void map(final Text key,
+    public void map(final LongWritable key,
                     final Text value,
                     final Context context) 
         throws IOException, InterruptedException {
@@ -61,7 +65,7 @@ public class SingleFileBandwidth {
       long bytesRead = 0;
       long sum = 0;
       try {
-        while(true) {
+        while(bytesRead < size) {
           sum += dataIn.readByte();
           bytesRead += 4;
         }
@@ -103,18 +107,20 @@ public class SingleFileBandwidth {
   }
 
   public void run(String[] args) throws Exception {
-    if (args.length != 2) {
-      System.out.println("SingleFileBandwidth <fileName> <numNodes>");
+    if (args.length != 3) {
+      System.out.println("SingleFileBandwidth <fileName> <numNodes> <size>");
       System.exit(-1);
     }
     readPath = new Path(args[0]);
     numMappers = Integer.parseInt(args[1]);
+    long size = Long.parseLong(args[2]);
     inPath = new Path(readPath.getParent(), "nullin");
     outPath = new Path(readPath.getParent(), "nullout");
     conf = new Configuration();
     conf.addResource("bandwidth-conf.xml");
     conf.set("bandwidth.file.name", readPath.toString());
-    FileSystem fs = FileSystem.get(conf);
+    conf.setLong("bandwidth.read.size", size);
+    FileSystem fs = FileSystem.get(readPath.toUri(), conf);
     long start, end;
 
     fs.delete(inPath);
