@@ -37,7 +37,7 @@ public class SingleFileBandwidth {
     public void setup(Context context) 
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
-      Path path = new Path(conf.get("bandwidth.file.name"));
+      path = new Path(conf.get("bandwidth.file.name"));
       fs = FileSystem.get(path.toUri(), conf);
       size = conf.getLong("bandwidth.read.size", 100*1024*1024);
 
@@ -49,6 +49,7 @@ public class SingleFileBandwidth {
         throws IOException, InterruptedException {
       
       System.out.println("Mapper: " + key + "\t" + value);
+      System.out.println("Reading file: " + path);
 
       FSDataInputStream in;
       DataInputStream dataIn;
@@ -68,6 +69,9 @@ public class SingleFileBandwidth {
         while(bytesRead < size) {
           sum += dataIn.readByte();
           bytesRead += 4;
+          if (bytesRead % 50*1024*1024 == 0) {
+            context.progress();
+          }
         }
       }
       catch (EOFException eof) {
@@ -131,6 +135,7 @@ public class SingleFileBandwidth {
       FSDataOutputStream out = new FSDataOutputStream(
           fs.create(new Path(inPath, "" + i)));
       (new Text("" + i)).write(out);
+      out.close();
     }
 
     start = System.currentTimeMillis();
