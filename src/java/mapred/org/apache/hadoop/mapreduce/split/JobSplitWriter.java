@@ -218,8 +218,8 @@ public class JobSplitWriter {
   //
   //MAP2-INFO |
   //
-  //ROWPACKSIZE
-  //COLPACKSIZE
+  //PACKROWSIZE
+  //PACKCOLSIZE
   //
   //NUM_SPLITS
   //NUM_SEGMENTS | 
@@ -235,10 +235,10 @@ public class JobSplitWriter {
       throws IOException{
     FSDataOutputStream out = FileSystem.create(fs, filename, p);
     out.write("MAP2-INFO".getBytes("UTF-8"));
-    int rowPackSize = conf.getInt("mapred.map2.input.row.pack.size", -1);
-    int colPackSize = conf.getInt("mapred.map2.input.col.pack.size", -1);
-    WritableUtils.writeVInt(out, rowPackSize);
-    WritableUtils.writeVInt(out, colPackSize);
+    int packRowSize = conf.getInt("mapred.map2.input.pack.row.size", -1);
+    int packColSize = conf.getInt("mapred.map2.input.pack.col.size", -1);
+    WritableUtils.writeVInt(out, packRowSize);
+    WritableUtils.writeVInt(out, packColSize);
     WritableUtils.writeVInt(out, splits.length);
     for (T inputSplit : splits) {
       Map2Split split = (Map2Split) inputSplit;

@@ -247,10 +247,10 @@ public class Map2InputFormat
   }
 
   public static void setPackHint(JobContext context, 
-                                  int rowPackSize, int colPackSize) {
+                                  int packRowSize, int packColSize) {
     Configuration conf = context.getConfiguration();
-    conf.setInt("mapred.map2.input.row.pack.size", rowPackSize);
-    conf.setInt("mapred.map2.input.col.pack.size", colPackSize);
+    conf.setInt("mapred.map2.input.pack.row.size", packRowSize);
+    conf.setInt("mapred.map2.input.pack.col.size", packColSize);
   }
 
 }

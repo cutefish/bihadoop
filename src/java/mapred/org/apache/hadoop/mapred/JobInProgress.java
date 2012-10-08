@@ -765,8 +765,8 @@ public class JobInProgress {
       map2Info.readMetaInfo(jobId, fs, conf, jobSubmitDir);
       map2TaskPacker.init(map2Info.getSegmentList(),
                           map2Info.getCoverMap(), 
-                          map2Info.rowPackSize,
-                          map2Info.colPackSize);
+                          map2Info.packRowSize,
+                          map2Info.packColSize);
     }
     //end xyu40@gatech.edu
 

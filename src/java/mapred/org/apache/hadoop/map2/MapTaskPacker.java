@@ -22,7 +22,7 @@ import org.apache.hadoop.fs.Segments.CoverInfo;
 /** 
  * Handles packing of map tasks.
  *
- * The goal of packing is to minimize the footprint(size of segment set) for
+ * The goal of packing is to minimize the footprint(while still load balance) for
  * each pack of task. Further, the locality of segments between tasks and jobs
  * are considered. This results into a two-step scheduling: a static grouping
  * according to the sets of segments among tasks; and a dynamic packing
@@ -42,8 +42,8 @@ public class MapTaskPacker {
   private List<List<Segment>> groups;
   private Map<Segment, TreeSet<Segment>> joinTable;
   private Map<Segment, Segment> coverMap;
-  private int rowPackSize;
-  private int colPackSize;
+  private int packRowSize;
+  private int packColSize;
 
   public MapTaskPacker(Configuration conf) {
     this.conf = conf;
@@ -156,12 +156,12 @@ public class MapTaskPacker {
    */
   public void init(List<Segment[]> segList,
                    Map<Segment, Segment> coverMap,
-                   int rowPackSize,
-                   int colPackSize) {
+                   int packRowSize,
+                   int packColSize) {
 
     this.coverMap = coverMap;
-    this.rowPackSize = rowPackSize;
-    this.colPackSize = colPackSize;
+    this.packRowSize = packRowSize;
+    this.packColSize = packColSize;
 
     long start = System.currentTimeMillis();
 

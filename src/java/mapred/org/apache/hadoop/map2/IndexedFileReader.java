@@ -29,12 +29,18 @@ public class IndexedFileReader {
   private List<String> idxList;
 
   /****************************************************************************
-   * Indexed File Format:
-   * int numIndecies
+   * Read a formated index file.
+   *
+   * Format:
+   *
+   * IDX_START
    * String index
-   * int numSegments
-   * Long off Long len
+   * SEG_START
+   * Long off, Long len
+   * SEG_START
+   * Long off, Long len
    * ...
+   * IDX_END
    */
   public void readIndexedFile(FileSystem fs, Path path) throws IOException {
     idxList = new ArrayList<String>();
@@ -45,32 +51,37 @@ public class IndexedFileReader {
     try {
       in = fs.open(idxPath);
       byte[] mark = new byte[IndexingConstants.MARK_LEN];
-      in.readFully(mark);
-      if (!Arrays.equals(mark, IndexingConstants.IDX_START))
-        throw new IOException("Invalid header on index file");
       while(true) {
+        //IDX_START mark
+        in.readFully(mark);
+        if (!Arrays.equals(mark, IndexingConstants.IDX_START))
+          throw new IOException("Invalid header on index file: " + 
+                                (new String(mark)) + 
+                                " should be: IDX_START");
+        //read idx
         String idx = Text.readString(in);
         idxList.add(idx);
+        //start read segments
         ArrayList<Segment> segs = new ArrayList<Segment>();
         while(true) {
           in.readFully(mark);
-          if (!Arrays.equals(mark, IndexingConstants.SEG_START)) {
-            if (!Arrays.equals(mark, IndexingConstants.IDX_END)) {
-              throw new IOException("Invalid header on index file");
-            }
-            else {
-              segList.add(segs.toArray(new Segment[segs.size()]));
-              in.readFully(mark);
-              if (!Arrays.equals(mark, IndexingConstants.IDX_START))
-                throw new IOException("Invalid header on index file");
-              break;
-            }
+          //SEG_START
+          if (Arrays.equals(mark, IndexingConstants.SEG_START)) {
+            long off = in.readLong();
+            long len = in.readLong();
+            Segment seg = new Segment(fs, path, off, len);
+            segs.add(seg);
           }
-          long off = in.readLong();
-          long len = in.readLong();
-          System.out.flush();
-          Segment seg = new Segment(fs, path, off, len);
-          segs.add(seg);
+          //IDX_END
+          else if (Arrays.equals(mark, IndexingConstants.IDX_END)) {
+            segList.add(segs.toArray(new Segment[segs.size()]));
+            break;
+          }
+          else {
+            throw new IOException("Invalid header on index file: " + 
+                                  (new String(mark)) + 
+                                  " should be: SEG_START or IDX_END");
+          }
         }
       }
     }
