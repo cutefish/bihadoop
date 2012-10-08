@@ -23,7 +23,7 @@ public class BlockCacheClient implements java.io.Closeable {
   private static final Log LOG = LogFactory.getLog(BlockCacheClient.class);
 
   private static final String LOCAL_HOST = "127.0.0.1";
-  private static final int RPC_TIME_OUT = 20000; //20 seconds 
+  private static final int RPC_TIME_OUT = 100000; //100 seconds 
 
   private final UserGroupInformation ugi;
   private BlockCacheProtocol server;
