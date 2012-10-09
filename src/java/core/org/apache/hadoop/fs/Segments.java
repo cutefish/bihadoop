@@ -79,57 +79,63 @@ public class Segments implements Writable {
 
   public static class CoverInfo implements Comparable<CoverInfo> {
 
-    public final long leftSize;
+    public final long remainLen;
     public final Segment segment;
 
-    public CoverInfo(long leftSize, Segment segment) {
-      this.leftSize = leftSize;
+    public CoverInfo(long remainLen, Segment segment) {
+      this.remainLen = remainLen;
       this.segment = segment;
     }
 
     @Override
     public int compareTo(CoverInfo that) {
       if (this == that) return 0;
-      if (this.leftSize > that.leftSize) return 1;
-      if (this.leftSize == that.leftSize) return 0;
-      if (this.leftSize < that.leftSize) return -1;
+      if (this.remainLen > that.remainLen) return 1;
+      if (this.remainLen == that.remainLen) return 0;
+      if (this.remainLen < that.remainLen) return -1;
       return 0;
     }
     @Override
     public String toString() {
       StringBuilder sb = new StringBuilder();
-      sb.append(segment.toString() + ", " + leftSize);
+      sb.append(segment.toString() + ", " + remainLen);
       return sb.toString();
     }
   }
 
   public CoverInfo cover(Segment key) {
-    return cover(0, thisList.size() - 1, key);
+    //segments are sorted by path, offset then by length
+    int startIdx, endIdx;
+    Segment start = new Segment(key.getPath(), 0, 1);
+    Segment end = new Segment(key.getPath(), 
+                              key.getOffset() + key.getLength() + 1, 1);
+    startIdx = Collections.binarySearch(thisList, start);
+    startIdx = (startIdx >= 0) ? startIdx : -(startIdx + 1);
+    endIdx = Collections.binarySearch(thisList, end);
+    endIdx = (endIdx >= 0) ? endIdx : -(endIdx + 1);
+    return cover(startIdx, endIdx, key);
   }
 
   /**
    * Calculate how this colleciton of segments cover the segment.
-   *
-   * We assume that the segments in the collection does not have very large
-   * overlap portions.
    */
-  public CoverInfo cover(int hintStart, int hintEnd, Segment key) {
+  public CoverInfo cover(int start, int end, Segment key) {
     if (thisList.size() == 0) return new CoverInfo(key.getLength(), key);
-    if (hintStart < 0) hintStart = 0;
-    if (hintEnd > thisList.size()) hintEnd = thisList.size();
-    int idx = hintStart;
+    if (start < 0) start = 0;
+    if (end > thisList.size()) end = thisList.size();
+    int idx = start;
     long targetStart = key.getOffset();
     long targetEnd = targetStart + key.getLength();
     Segment curr;
-    long leftSize = 0;
-    //There are six cases:
-    //(1)curr.start > curr.end > targetStart > targetEnd
-    //(2)curr.start > targetStart > curr.end > targetEnd
-    //(3)curr.start > targetStart > targetEnd > curr.end
-    //(4)targetStart > curr.start > curr.end > targetEnd
-    //(5)targetStart > curr.start > targetEnd > curr.end
-    //(6)targetStart > targetEnd > curr.start > curr.end 
-    while(idx < hintEnd) {
+    long remainLen = 0;
+    //There are six cases when iterating through the list:
+    //(1)currStart < currEnd < targetStart < targetEnd
+    //(2)currStart < targetStart < currEnd < targetEnd
+    //(3)currStart < targetStart < targetEnd < currEnd
+    //(4)targetStart < currStart < currEnd < targetEnd
+    //(5)targetStart < currStart < targetEnd < currEnd
+    //(6)targetStart < targetEnd < currStart < currEnd 
+    while(idx < end) {
       curr = thisList.get(idx);
       if (!curr.getPath().equals(key.getPath())) {
         idx ++;
@@ -137,30 +143,35 @@ public class Segments implements Writable {
       }
       long currStart = curr.getOffset();
       long currEnd = currStart + curr.getLength();
-      //case (6) calculation ends
-      if (currStart > targetEnd) break;
       //case (4) and (5)
-      if (currStart > targetStart) {
-        leftSize += currStart - targetStart;
+      if (targetStart < currStart) {
+        remainLen += currStart - targetStart;
         targetStart = currStart;
       }
       //case (3) and (5)
-      if (currEnd > targetEnd) {
+      if (targetEnd < currEnd) {
         targetStart = targetEnd;
         break;
       }
       //case (2) and (4)
-      if (targetStart <= currEnd) {
+      if (targetStart < currEnd) {
         targetStart = currEnd;
       }
       //case (1) do nothing
+      //case (6) calculation ends
+      if (targetEnd < currStart) break;
       idx ++;
     }
 
-    if (targetEnd > targetStart) leftSize += targetEnd - targetStart;
-    return new CoverInfo(leftSize, key);
+    if (targetEnd > targetStart) remainLen += targetEnd - targetStart;
+    return new CoverInfo(remainLen, key);
   }
 
+  /**
+   * Calculate how this segments cover each of that segment.
+   *
+   * Return a list of CoverInfo for each of that segment, null if this is empty.
+   */
   public List<CoverInfo> cover(Collection<Segment> that) {
     List<Segment> thatList = new ArrayList<Segment>(that);
     Collections.sort(thatList);
@@ -170,22 +181,19 @@ public class Segments implements Writable {
     if (thisList.size() == 0) return null;
 
     //since both lists are sorted, we can limit the search range.
-    //int idx;
-    //idx = Collections.binarySearch(thisList, thatList.get(0));
-    //int thisStart = (idx >= 0) ? idx : -(idx + 1) - 1;
-    //idx = Collections.binarySearch(thisList, thatList.get(thatList.size() - 1));
-    //int thisEnd = (idx >= 0) ? idx : -(idx + 1) + 1;
-    //idx = Collections.binarySearch(thatList, thisList.get(0));
-    //int thatStart = (idx >= 0) ? idx : -(idx + 1) - 1;
-    //idx = Collections.binarySearch(thatList, thisList.get(thisList.size() - 1));
-    //int thatEnd = (idx >= 0) ? idx : -(idx + 1) + 1;
-    //if (thatStart < 0) thatStart = 0;
-    //if (thatEnd >= thatList.size()) thatEnd = thatList.size() - 1;
+    int startIdx, endIdx;
+    Segment first = thisList.get(0);
+    Segment last = thisList.get(thisList.size() - 1);
+    Segment start = new Segment(first.getPath(), 0, 1);
+    Segment end = new Segment(last.getPath(),
+                              last.getOffset() + last.getLength() + 1, 1);
+    startIdx = Collections.binarySearch(thisList, start);
+    startIdx = (startIdx >= 0) ? startIdx : -(startIdx + 1);
+    endIdx = Collections.binarySearch(thisList, end);
+    endIdx = (endIdx >= 0) ? endIdx : -(endIdx + 1);
 
-    //for (int i = thatStart; i <= thatEnd; ++i) {
-    for (int i = 0; i < thatList.size(); ++i) {
-      //CoverInfo result = cover(thisStart, thisEnd, thatList.get(i));
-      CoverInfo result = cover(0, thisList.size(), thatList.get(i));
+    for (int i = startIdx; i < endIdx; ++i) {
+      CoverInfo result = cover(thatList.get(i));
       ret.add(result);
     }
 

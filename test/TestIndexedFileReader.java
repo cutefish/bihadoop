@@ -48,7 +48,6 @@ public class TestIndexedFileReader {
         }
       }
       System.out.println("size: " + idxList.size());
-      System.out.println("size: " + segList.size());
     }
     catch (Exception e) {
       System.out.println("Exception: " + StringUtils.stringifyException(e));

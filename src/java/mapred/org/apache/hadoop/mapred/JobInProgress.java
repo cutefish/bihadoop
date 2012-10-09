@@ -2535,6 +2535,10 @@ public class JobInProgress {
             LOG.debug("Node: " + host + " cannot get a disk level pack\n");
             break;
           }
+          if (diskPack.isEmpty()) {
+            LOG.info("Node: " + host + " pack empty, possibly capacity not enough\n");
+            break;
+          }
           diskPackCache.put(host, diskPack);
           LOG.info("Node: " + host + '\n' + 
                    "Level: " + "disk" + '\n' +

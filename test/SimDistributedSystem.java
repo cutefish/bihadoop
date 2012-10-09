@@ -251,6 +251,11 @@ public class FakeDistributedSystem {
                        " cannot get a disk level pack\n");
               break;
             }
+            if (diskPack.isEmpty()) {
+              LOG.info("Node: " + nodeIndex + 
+                       " pack empty, possibly capacity not enough\n");
+              break;
+            }
             diskPackCache.put(nodeIndex, diskPack);
             LOG.debug("Node: " + nodeIndex + '\n' + 
                      "Level: " + "disk" + '\n' +
