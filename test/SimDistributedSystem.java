@@ -1,3 +1,5 @@
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.HashMap;
@@ -18,103 +20,122 @@ import org.apache.hadoop.fs.Segments;
 import org.apache.hadoop.map2.MapTaskPacker;
 import org.apache.hadoop.map2.MapTaskPacker.Pack;
 
-/* FakeDistributedSystem.java
+/* SimDistributedSystem.java
  */
 
-public class FakeDistributedSystem {
+public class SimDistributedSystem {
 
-  private static final Log LOG = LogFactory.getLog(FakeDistributedSystem.class);
+  private static final Log LOG = LogFactory.getLog(SimDistributedSystem.class);
 
-  private Configuration conf;
-  private int schedChoice;
-  private int numOfNodes;
-  private int numOfReplicas;
-  private FakeNode[] nodes;
-  private Map<Segment, LinkedList<Integer>> locationCache;
+  private final Configuration conf;
+  private final int schedChoice;
+  private final int numNodes;
+  private final int numReplicas;
+  private final long blockLen;
 
-  public FakeDistributedSystem(Configuration conf) {
-    this.conf = conf;
+  private SimNode[] nodes;
+  private Map<Segment, LinkedList<Integer>> replicaInfo;
+
+  public SimDistributedSystem() {
+    this.conf = new Configuration();
+    conf.addResource("sim-sched-conf.xml");
     init();
   }
 
-  public class FakeNode {
-    private final int nodeId;
+  private List<Segment> getSegmentBlocks(Segment s) {
+    List<Segment> ret = new ArrayList<Segment>();
+    long off = (s.getOffset() / blockLen) * blockLen;
+    long len = (s.getLength() / blockLen) * blockLen;
+    for (long i = 0; i < len; i += blockLen) {
+      ret.add(new Segment(s.getPath(), i, blockLen));
+    }
+    return ret;
+  }
 
-    private long diskCapacity;
-    private long memoryCapacity;
-    private Set<Segment> staticSplits;
-    private Set<Segment> dynamicSplits;
+  public class SimNode {
+    public final int nodeId;
+    public final long diskCapacity;
+    public final long memoryCapacity;
 
-    public FakeNode(int id) {
+    private Set<Segment> replicas
+    private List<Segment> cache;
+    private int hits;
+    private int misses;
+
+    public SimNode(int id) {
       nodeId = id;
-      this.diskCapacity = conf.getLong("node.disk.capacity", 16000);
-      this.memoryCapacity = conf.getLong("node.memory.capacity", 1700);
-      final long cacheSize = diskCapacity / conf.getInt("split.block.size", 64);
-      staticSplits = new HashSet<Segment>();
-      dynamicSplits = Collections.newSetFromMap(
-          new LinkedHashMap<Segment, Boolean>() {
-          protected boolean removeEldestEntry(
-              Map.Entry<Segment, Boolean> eldest) {
-          return size() > cacheSize;
-          }
-          });
+      this.diskCapacity = conf.getLong("node.disk.capacity", 1024 * 1024 * 1024 * 10);
+      this.memoryCapacity = conf.getLong("node.memory.capacity", 1024 * 1024 * 256);
+      replicas = new HashSet<Segment>();
+      cache = new LinkedList<Segment>();
     }
 
     public String toString() {
       return "node#" + nodeId;
     }
 
-    public int getNodeId() {
-      return nodeId;
+    //replicas should be conformed to block configuration.
+    public void addReplica(Segment s) {
+      long off = (s.getOffset() / blockLen) * blockLen;
+      replicas.add(new Segment(s.getPath(), off, blockLen));
     }
 
-    public long getDiskCapacity() {
-      return diskCapacity;
+    //read a segment without cache
+    public void read(Segment s) {
+      List<Segment> blocks = getSegmentBlocks(s);
+      for (Segment b : blocks) {
+        if (replicas.contains(b)) {
+          hits ++;
+        }
+        else {
+          misses ++;
+        }
+      }
     }
 
-    public long getMemoryCapacity() {
-      return memoryCapacity;
+    //access a segment, cache block if not replicated
+    public void cachedRead(Segment s) {
+      List<Segment> blocks = getSegmentBlocks(s);
+      for (Segment b : blocks) {
+        if ((replicas.contains(b)) || (hasCached(b))) {
+          hits ++;
+          continue;
+        }
+        cache.pollFirst();
+        cache.addLast(b);
+        misses ++;
+      }
     }
 
-    public Set<Segment> getStaticSplits() {
-      return staticSplits;
+    public boolean hasCached(Segment b) {
+      int idx = Collections.binarySearch(cache, b);
+      if (idx < 0) return false;
+      return true;
     }
 
-    public Set<Segment> getDynamicSplits() {
-      return dynamicSplits;
+
+    public Collection<Segment> getReplicas() {
+      return replicas;
     }
 
-    public void addStaticSplit(Segment s) {
-      staticSplits.add(s);
+    public Collection<Segment> getCache() {
+      return cache;
     }
 
-    public void addDynamicSplit(Segment s) {
-      dynamicSplits.add(s);
-    }
-
-    public boolean hasInStatic(Segment s) {
-      return staticSplits.contains(s);
-    }
-
-    public boolean hasInDynamic(Segment s) {
-      return dynamicSplits.contains(s);
-    }
-
-    public String staticLocalToString() {
-      return localToString(staticSplits);
-    }
-
-    public String dynamicLocalToString() {
-      return localToString(dynamicSplits);
-    }
-
-    private String localToString(Set<Segment> segs) {
+    public String toString() {
       StringBuilder ret = new StringBuilder();
-      ret.append("[" + segs.size() + ": ");
-      for (Segment seg : segs) {
+      ret.append("d: " + diskCapacity + 
+                 "m: " + memoryCapacity + " ");
+      ret.append("r[" + replicas.size() + ": ");
+      for (Segment seg : replicas) {
         ret.append(seg.toString() + ", ");
       }
-      ret.append("]");
+      ret.append("] ");
+      ret.append("c[" + cache.size() + ": ");
+      for (Segment seg : cache) {
+        ret.append(seg.toString() + ", ");
+      }
+      ret.append("] ");
       return ret.toString();
     }
   }
@@ -158,81 +179,80 @@ public class FakeDistributedSystem {
 
   public void init() {
     schedChoice = conf.getInt("node.schedule.choice", 0);
-    numOfNodes = conf.getInt("num.of.distributed.node", 100);
-    numOfReplicas = conf.getInt("num.of.replicas", 3);
-    nodes = new FakeNode[numOfNodes];
+    numNodes = conf.getInt("num.distributed.node", 100);
+    numReplicas = conf.getInt("num.replicas", 3);
+    blockLen = conf.getInt("node.block.len", 64 * 1024 * 1024);
+    nodes = new SimNode[numOfNodes];
     for (int i = 0; i < numOfNodes; ++i) {
-      FakeNode n = this.new FakeNode(i);
+      SimNode n = new SimNode(i);
       nodes[i] = n;
     }
-    locationCache = new HashMap<Segment, LinkedList<Integer>>();
+    replicaInfo = new HashMap<Segment, LinkedList<Integer>>();
   }
 
-  private void createSplit(Segment s) {
-    if (locationCache.get(s) != null) return;
-    Random r = new Random();
-    LinkedList<Integer> locationList = new LinkedList<Integer>();
-    for (int i = 0; i < numOfReplicas; ++i) {
-      int nodeId = r.nextInt(numOfNodes);
-      locationList.add(nodeId);
-      nodes[nodeId].addStaticSplit(s);
+  private void createReplicas(Collection<Segment> segments) {
+    for (Segment seg : segments) {
+      List<Segment> blocks = getSegmentBlocks(seg);
+      for (Segment b : blocks) {
+        if (replicaInfo.get(s) != null) return;
+        Random r = new Random();
+        LinkedList<Integer> locations = new LinkedList<Integer>();
+        for (int i = 0; i < numReplicas; ++i) {
+          int nodeId = r.nextInt(numNodes);
+          locations.add(nodeId);
+          nodes[nodeId].addReplica(b);
+        }
+        replicaInfo.put(s, locations);
+      }
     }
-    locationCache.put(s, locationList);
   }
 
-  private void cacheAt(Segment s, int nodeId) {
-    if(!nodes[nodeId].hasInStatic(s))
-      nodes[nodeId].addDynamicSplit(s);
-  }
-
-  public FakeNode getNode(int nodeId) {
+  public SimNode getNode(int nodeId) {
     return nodes[nodeId];
   }
 
-  public void submitJob(FakeJob job) {
-    LOG.info("submitted job");
-    job.init();
-    LOG.info("number of tasks: " + job.getNumTasks());
-    for (Segment split : job.getSplits()) {
-      createSplit(split);
+  public float getHitRate() {
+    int totalHit = 0;
+    int totalMiss = 0;
+    for (SimNode node : nodes) {
+      totalHit += node.hits;
+      totalMiss += node.misses;
     }
+    return (float)totalHit / (float)totalMiss;
   }
 
-  private void runJobMap2(FakeJob job) {
+  private void runJobMap2(List<Segment[]> tasks) {
     int finishedMaps = 0;
     int hit = 0;
     int miss = 0;
 
-    Map<Integer, Pack> memoryPackCache = new HashMap<Integer, Pack>();
-    Map<Integer, Pack> diskPackCache = new HashMap<Integer, Pack>();
+    Map<Integer, Pack> memoryPacks = new HashMap<Integer, Pack>();
+    Map<Integer, Pack> diskPacks = new HashMap<Integer, Pack>();
+
     MapTaskPacker packer = new MapTaskPacker(conf);
-    packer.init(job.getTaskList(), null, 0, 0);
-    if (packer.numGroups() > 4) {
-      LOG.info(packer.groupsToString());
-    }
+    Map<Segment, Segment> coverMap = buildCoverMap(tasks);
+    packer.init(tasks, coverMap, -1, -1);
 
     Map<SegmentPair, Integer> scheduledTasks = 
         new HashMap<SegmentPair, Integer>();
 
     LOG.info("finished initialization");
 
-    while (finishedMaps < job.getNumTasks()) {
+    while (finishedMaps < tasks.size()) {
       //a wild node appears
       Random r = new Random();
       int nodeIndex = r.nextInt(nodes.length);
-      FakeNode node = getNode(nodeIndex);
-      LOG.debug("node #" + nodeIndex + " asking for task");
-      LOG.debug("Node local: \n" + 
-               "static: " + node.staticLocalToString() + "\n" + 
-               "dynamic: " + node.dynamicLocalToString() + "\n");
+      SimNode node = getNode(nodeIndex);
+      LOG.info("node #" + nodeIndex + " asking for task." + 
+               " info: " + node.toString());
 
       //get a task
       Segment[] task = null;
       while (task == null) {
-        Pack memoryPack = memoryPackCache.get(nodeIndex);
+        Pack memoryPack = memPacks.get(nodeIndex);
         if (memoryPack == null) {
-          LOG.debug("Node: " + nodeIndex + " no memory pack available\n");
-          Pack diskPack = diskPackCache.get(nodeIndex);
+          LOG.info("Node: " + nodeIndex + " no memory pack available\n");
+          Pack diskPack = diskPacks.get(nodeIndex);
           if (diskPack == null) {
             LOG.debug("Node: " + nodeIndex + " no disk pack available\n");
             try {
@@ -256,7 +276,7 @@ public class FakeDistributedSystem {
                        " pack empty, possibly capacity not enough\n");
               break;
             }
-            diskPackCache.put(nodeIndex, diskPack);
+            diskPacks.put(nodeIndex, diskPack);
             LOG.debug("Node: " + nodeIndex + '\n' + 
                      "Level: " + "disk" + '\n' +
                      "Pack: " + '\n' + diskPack.toString() + '\n');
@@ -271,18 +291,18 @@ public class FakeDistributedSystem {
           }
           if (memoryPack == null) {
             LOG.debug("Node: " + nodeIndex + " finished a disk pack\n");
-            diskPackCache.remove(nodeIndex);
+            diskPacks.remove(nodeIndex);
             continue;
           }
           LOG.debug("Node: " + nodeIndex + '\n' + 
                    "Level: " + "memory" + '\n' +
                    "Pack: " + '\n' + memoryPack.toString() + '\n');
-          memoryPackCache.put(nodeIndex, memoryPack);
+          memPacks.put(nodeIndex, memoryPack);
         }
         task = memoryPack.getNext();
         if (task == null) {
           LOG.debug("Node: " + nodeIndex + " finished a memory pack\n");
-          memoryPackCache.remove(nodeIndex);
+          memPacks.remove(nodeIndex);
         }
       }
 
@@ -321,6 +341,18 @@ public class FakeDistributedSystem {
     if (!packer.isFinished()) {
       System.exit(-1);
     }
+  }
+
+  private Map<Segment, Segment> buildCoverMap(List<Segment[]> segments) {
+    HashMap<Segment, Segment> ret = new HashMap<Segment, Segment>();
+    for (Segment[] segs : segments) {
+      for (Segment s : segs) {
+        if (ret.contains(s)) continue;
+        long off = (s.getOffset() / blockLen) * blockLen;
+        ret.add(s, new Segment(s.getPath(), off, blockLen));
+      }
+    }
+    return ret;
   }
 
   private void runJobRandom(FakeJob job) {

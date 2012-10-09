@@ -21,11 +21,11 @@
         <value>64</value>
     </property>
     <property>
-        <name>num.of.distributed.node</name>
+        <name>num.distributed.node</name>
         <value>16</value>
     </property>
     <property>
-        <name>num.of.replicas</name>
+        <name>num.replicas</name>
         <value>3</value>
     </property>
     <property>

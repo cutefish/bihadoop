@@ -327,8 +327,8 @@ public class JobInProgress {
   //Added by xyu40@gatech.edu
   Map2MetaInfo map2Info;
   MapTaskPacker map2TaskPacker;
-  Map<String, Pack> memoryPackCache = new HashMap<String, Pack>();
-  Map<String, Pack> diskPackCache = new HashMap<String, Pack>();
+  Map<String, Pack> memPacks = new HashMap<String, Pack>();
+  Map<String, Pack> diskPacks = new HashMap<String, Pack>();
   //end xyu40@gatech.edu
   
   /**
@@ -2521,10 +2521,10 @@ public class JobInProgress {
     String host = tts.getHost();
     Segment[] task = null;
     while (task == null) {
-      Pack memoryPack = memoryPackCache.get(host);
+      Pack memoryPack = memPacks.get(host);
       if (memoryPack == null) {
         LOG.debug("Node: " + host + " no memory pack available\n");
-        Pack diskPack = diskPackCache.get(host);
+        Pack diskPack = diskPacks.get(host);
         if (diskPack == null) {
           LOG.debug("Node: " + host + " no disk pack available\n");
           diskPack = map2TaskPacker.obtainLastLevelPack(
@@ -2539,7 +2539,7 @@ public class JobInProgress {
             LOG.info("Node: " + host + " pack empty, possibly capacity not enough\n");
             break;
           }
-          diskPackCache.put(host, diskPack);
+          diskPacks.put(host, diskPack);
           LOG.info("Node: " + host + '\n' + 
                    "Level: " + "disk" + '\n' +
                    "Pack: " + '\n' + diskPack.toString() + '\n');
@@ -2548,18 +2548,18 @@ public class JobInProgress {
             diskPack, tts.getMemoryCacheCapacity());
         if (memoryPack == null) {
           LOG.debug("Node: " + host + " finished a disk pack\n");
-          diskPackCache.remove(host);
+          diskPacks.remove(host);
           continue;
         }
         LOG.info("Node: " + host + '\n' + 
                  "Level: " + "memory" + '\n' +
                  "Pack: " + '\n' + memoryPack.toString() + '\n');
-        memoryPackCache.put(host, memoryPack);
+        memPacks.put(host, memoryPack);
       }
       task = memoryPack.getNext();
       if (task == null) {
         LOG.info("Node: " + host + " finished a memory pack\n");
-        memoryPackCache.remove(host);
+        memPacks.remove(host);
       }
     }
     if (task == null) return null;

@@ -6,12 +6,12 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.map2.Map2Filter;
 
-/* FakeJobs.java
+/* SimJobs.java
  *
  * Collection of job patterns.
  */
 
-public class FakeJob {
+public class SimJob {
 
   private List<Segment[]> taskList;
   private Map2Filter filter;

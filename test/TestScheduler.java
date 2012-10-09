@@ -12,9 +12,9 @@ class TestScheduler {
 
   static class TestJobWrapper {
 
-    protected FakeJob job;
+    protected SimJob job;
 
-    public FakeJob getJob() {
+    public SimJob getJob() {
       return job;
     }
 
@@ -32,7 +32,7 @@ class TestScheduler {
     }
 
     AllPairJob(Configuration conf) {
-      job = new FakeJob();
+      job = new SimJob();
       job.setFilter(new AllPairFilter());
       long blockSize = conf.getInt("split.block.size", 64);
       int numSplit0 = conf.getInt("allpair.num.split0", 100);
@@ -60,7 +60,7 @@ class TestScheduler {
     }
 
     AllPairDiagJob(Configuration conf) {
-      job = new FakeJob();
+      job = new SimJob();
       job.setFilter(new AllPairDiagFilter());
       long blockSize = conf.getInt("split.block.size", 64);
       int numSplit0 = conf.getInt("allpairdiag.num.split", 100);
@@ -102,7 +102,7 @@ class TestScheduler {
     }
 
     MatMatMultJob(Configuration conf) {
-      job = new FakeJob();
+      job = new SimJob();
       job.setFilter(new MatMatMultFilter());
       long blockSize = conf.getInt("split.block.size", 64);
       numARowBlock = conf.getInt("matmatmult.num.split.A.row", 4);
@@ -139,7 +139,7 @@ class TestScheduler {
 
     MatVecMultJob(Configuration conf) {
       super(conf);
-      job = new FakeJob();
+      job = new SimJob();
       job.setFilter(new MatMatMultFilter());
       blockSize = conf.getInt("split.block.size", 64);
       numARowBlock = conf.getInt("matmatmult.num.split.A.row", 4);
@@ -201,7 +201,7 @@ class TestScheduler {
       paramType[0] = Configuration.class;
       Constructor ctor = testClass.getDeclaredConstructor(paramType);
       TestJobWrapper testJob = (TestJobWrapper) ctor.newInstance(conf);
-      FakeDistributedSystem system = new FakeDistributedSystem(conf);
+      SimDistributedSystem system = new SimDistributedSystem(conf);
 
       for (int i = 0; i < numIterations; ++i) {
         System.out.format("---------iteration: %d-------\n", i);
