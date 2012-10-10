@@ -1,218 +1,292 @@
 import java.lang.reflect.Constructor;
-import java.util.List;
+import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Random;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.util.StringUtils;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.map2.Map2Filter;
 
-class TestScheduler {
+public class TestScheduler {
 
-  static class TestJobWrapper {
-
-    protected SimJob job;
-
-    public SimJob getJob() {
-      return job;
+  static public List<Segment> getSplits(
+      String pathName, long length, long splitLen, float rf) {
+    Random r = new Random();
+    List<Segment> ret = new ArrayList<Segment>();
+    long start, end;
+    start = end = 0;
+    while(true) {
+      if (start >= length) break;
+      long rLen = (long)(splitLen * rf);
+      long thisLen = splitLen - rLen + 2 * r.nextInt((int)rLen);
+      end = start + thisLen;
+      if (end > length) {
+        end = length;
+        thisLen = end - start;
+      }
+      ret.add(new Segment(new Path(pathName), start, thisLen));
+      start = end;
     }
-
-    public void update() {
-    }
+    return ret;
   }
 
-  static class AllPairJob extends TestJobWrapper {
+  static class AllPair extends SimJobClient {
 
     static class AllPairFilter implements Map2Filter {
       public boolean accept(String s0, String s1) {
-        return ((s0.contains("split0")) &&
-                (s1.contains("split1")));
+        return ((s0.contains("input0")) &&
+                (s1.contains("input1")));
       }
     }
 
-    AllPairJob(Configuration conf) {
-      job = new SimJob();
+    public AllPair(Configuration conf) {
+      super(conf);
       job.setFilter(new AllPairFilter());
-      long blockSize = conf.getInt("split.block.size", 64);
-      int numSplit0 = conf.getInt("allpair.num.split0", 100);
-      int numSplit1 = conf.getInt("allpair.num.split1", 200);
-      List<Segment> splitList = new ArrayList<Segment>();
-      for (int i = 0; i < numSplit0; ++i) {
-        splitList.add(
-            new Segment(new Path("allpair.split0"), i*blockSize, blockSize));
-      }
-      for (int i = 0; i < numSplit1; ++i) {
-        splitList.add(
-            new Segment(new Path("allpair.split1"), i*blockSize, blockSize));
-      }
-      job.setInputs(splitList);
     }
 
+    public void configJob(int iteration) {
+      long input0Len = conf.getLong("allpair.input0.length", 1024 * 10);
+      long input1Len = conf.getLong("allpair.input1.length", 1024 * 10);
+      long splitLen = conf.getLong("allpair.split.length", 128);
+      float randFactor = conf.getFloat("job.split.length.rand", 0.1f);
+      job.setInputs(
+          Arrays.asList(
+              new Segment(new Path("/data/allpair.input0"), 0, input0Len),
+              new Segment(new Path("/data/allpair.input1"), 0, input1Len)));
+      List<Segment> inputs = new ArrayList<Segment>();
+      inputs.addAll(getSplits("/data/allpair.input0", input0Len,
+                              splitLen, randFactor));
+      inputs.addAll(getSplits("/data/allpair.input1", input0Len,
+                              splitLen, randFactor));
+      job.formatTasks(inputs);
+    }
   }
 
-  static class AllPairDiagJob extends TestJobWrapper {
+  static class HalfAllPair extends SimJobClient {
 
-    static class AllPairDiagFilter implements Map2Filter {
+    static class HalfAllPairFilter implements Map2Filter {
       public boolean accept(String s0, String s1) {
         return true;
       }
     }
 
-    AllPairDiagJob(Configuration conf) {
-      job = new SimJob();
-      job.setFilter(new AllPairDiagFilter());
-      long blockSize = conf.getInt("split.block.size", 64);
-      int numSplit0 = conf.getInt("allpairdiag.num.split", 100);
-      List<Segment> splitList = new ArrayList<Segment>();
-      for (int i = 0; i < numSplit0; ++i) {
-        splitList.add(
-            new Segment(new Path("allpair.split"), i*blockSize, blockSize));
-      }
-      job.setInputs(splitList);
+    public HalfAllPair(Configuration conf) {
+      super(conf);
+      job.setFilter(new HalfAllPairFilter());
     }
 
+    public void configJob(int iteration) {
+      long inputLen = conf.getLong("halfallpair.input.length", 1024 * 10);
+      long splitLen = conf.getLong("halfallpair.split.length", 128);
+      float randFactor = conf.getFloat("job.split.length.rand", 0.1f);
+      job.setInputs(
+          Arrays.asList(
+              new Segment(new Path("/data/halfallpair.input"), 0, inputLen)));
+      List<Segment> inputs = new ArrayList<Segment>();
+      inputs.addAll(getSplits("/data/halfallpair.input", inputLen,
+                              splitLen, randFactor));
+      job.formatTasks(inputs);
+    }
   }
 
-  static class MatMatMultJob extends TestJobWrapper {
+  static class DiagBlock extends SimJobClient {
 
-    protected int numARowBlock;
-    protected int numAColBlock;
-    protected int numBRowBlock;
-    protected int numBColBlock;
-
-    public class MatMatMultFilter implements Map2Filter {
+    /**
+     * Filter to form a diag block matrix.
+     *
+     * input0 and input1 resides in the same block is an all pair.
+     */
+    public class BlockFilter implements Map2Filter {
       public boolean accept(String s0, String s1) {
-        Segment seg0 = Segment.parseSegment(s0);
-        Segment seg1 = Segment.parseSegment(s1);
-        String path0 = seg0.getPath().toString();
-        String path1 = seg1.getPath().toString();
-        long off0 = seg0.getOffset();
-        long off1 = seg1.getOffset();
-        long len = seg0.getLength();
-        int col0 = (int) (off0 / len % numARowBlock);
-        int row1 = (int) (off1 / len / numBRowBlock);
-        if ((path0.contains("A")) && 
-            (path1.contains("B")) &&
-            (col0 == row1)) {
-          return true;
+        if (!s0.contains("input0")) return false;
+        if (!s1.contains("input1")) return false;
+        try {
+          int blockId0 = Integer.parseInt(s0.split("_")[1]);
+          int blockId1 = Integer.parseInt(s1.split("_")[1]);
+          if (blockId0 == blockId1) return true;
+        }
+        catch (Exception e) {
+          return false;
         }
         return false;
       }
     }
 
-    MatMatMultJob(Configuration conf) {
-      job = new SimJob();
-      job.setFilter(new MatMatMultFilter());
-      long blockSize = conf.getInt("split.block.size", 64);
-      numARowBlock = conf.getInt("matmatmult.num.split.A.row", 4);
-      numAColBlock = conf.getInt("matmatmult.num.split.A.col", 8);
-      numBRowBlock = conf.getInt("matmatmult.num.split.B.row", 8);
-      numBColBlock = conf.getInt("matmatmult.num.split.B.col", 8);
-      List<Segment> splitList = new ArrayList<Segment>();
-      System.out.println("A: " + numARowBlock + " * " + numAColBlock);
-      System.out.println("B: " + numBRowBlock + " * " + numBColBlock);
-      for (int i = 0; i < numARowBlock; ++i) {
-        for (int j = 0; j < numAColBlock; ++j) {
-          String name = "mm.A.row" + i + ".col" + j;
-          long off = (i * numARowBlock + j) * blockSize;
-          long len = blockSize;
-          splitList.add(new Segment(new Path(name), off, len));
-        }
-      }
-      for (int i = 0; i < numBRowBlock; ++i) {
-        for (int j = 0; j < numBColBlock; ++j) {
-          String name = "mm.B.row" + i + ".col" + j;
-          long off = (i * numARowBlock + j) * blockSize;
-          long len = blockSize;
-          splitList.add(new Segment(new Path(name), off, len));
-        }
-      }
-      job.setInputs(splitList);
-    }
-  }
-
-  static class MatVecMultJob extends MatMatMultJob {
-
-    private int numIteration = 0;
-    private int blockSize = 0;
-
-    MatVecMultJob(Configuration conf) {
+    public DiagBlock(Configuration conf) {
       super(conf);
-      job = new SimJob();
-      job.setFilter(new MatMatMultFilter());
-      blockSize = conf.getInt("split.block.size", 64);
-      numARowBlock = conf.getInt("matmatmult.num.split.A.row", 4);
-      numAColBlock = conf.getInt("matmatmult.num.split.A.col", 8);
-      numBRowBlock = conf.getInt("matmatmult.num.split.B.row", 8);
-      List<Segment> splitList = new ArrayList<Segment>();
-      for (int i = 0; i < numARowBlock; ++i) {
-        for (int j = 0; j < numAColBlock; ++j) {
-          String name = "mm.A.row" + i + ".col" + j;
-          long off = (i * numARowBlock + j) * blockSize;
-          long len = blockSize;
-          splitList.add(new Segment(new Path(name), off, len));
-        }
-      }
-      for (int i = 0; i < numBRowBlock; ++i) {
-        for (int j = 0; j < 1; ++j) {
-          String name = "mm.B." + numIteration + ".row" + i + ".col" + j;
-          long off = (i * numARowBlock + j) * blockSize;
-          long len = blockSize;
-          splitList.add(new Segment(new Path(name), off, len));
-        }
-      }
-      job.setInputs(splitList);
+      job.setFilter(new BlockFilter());
     }
 
-    @Override
-    public void update() {
-      numIteration ++;
-      List<Segment> splitList = new ArrayList<Segment>();
-      for (int i = 0; i < numARowBlock; ++i) {
-        for (int j = 0; j < numAColBlock; ++j) {
-          String name = "mm.A.row" + i + ".col" + j;
-          long off = (i * numARowBlock + j) * blockSize;
-          long len = blockSize;
-          splitList.add(new Segment(new Path(name), off, len));
+    public void configJob(int iteration) {
+      long input0Len = conf.getLong("diagblock.input0.length", 1024 * 10);
+      long input1Len = conf.getLong("diagblock.input1.length", 1024 * 10);
+      long split0Len = conf.getLong("diagblock.split0.length", 128);
+      long split1Len = conf.getLong("diagblock.split1.length", 128);
+      int numBlocks = conf.getInt("diagblock.num.blocks", 16);
+      float randFactor = conf.getFloat("job.split.length.rand", 0.1f);
+      job.setInputs(
+          Arrays.asList(
+              new Segment(new Path("/data/diagblock.input0"), 0, input0Len),
+              new Segment(new Path("/data/diagblock.input1" + iteration), 
+                          0, input1Len)));
+      List<Segment> inputs = new ArrayList<Segment>();
+      List<String> indices = new ArrayList<String>();
+      inputs.addAll(getSplits("/data/diagblock.input0", input0Len,
+                              split0Len, randFactor));
+      int inputs0Size = inputs.size();
+      inputs.addAll(getSplits("/data/diagblock.input1" + iteration, 
+                              input1Len, split1Len, randFactor));
+      int inputs1Size = inputs.size() - inputs0Size;
+      for (int i = 0; i < numBlocks; ++i) {
+        int remain = inputs0Size - (inputs0Size / numBlocks) * numBlocks;
+        int fullsize = inputs0Size / numBlocks + ((i < remain) ? 1 : 0);
+        for (int j = 0; j < fullsize; ++j) {
+          indices.add("input0_" + i);
         }
       }
-      for (int i = 0; i < numBRowBlock; ++i) {
-        for (int j = 0; j < 1; ++j) {
-          String name = "mm.B." + numIteration + ".row" + i + ".col" + j;
-          long off = (i * numARowBlock + j) * blockSize;
-          long len = blockSize;
-          splitList.add(new Segment(new Path(name), off, len));
+      for (int i = 0; i < numBlocks; ++i) {
+        int remain = inputs1Size - (inputs1Size / numBlocks) * numBlocks;
+        int fullsize = inputs1Size / numBlocks + ((i < remain) ? 1 : 0);
+        for (int j = 0; j < fullsize; ++j) {
+          indices.add("input1_" + i);
         }
       }
-      job.setInputs(splitList);
+      job.formatTasks(indices, inputs);
     }
-
   }
+
+  static class CirShflBlock extends DiagBlock {
+
+    public CirShflBlock(Configuration conf) {
+      super(conf);
+    }
+
+    public void configJob(int iteration) {
+      long input0Len = conf.getLong("diagblock.input0.length", 1024 * 10);
+      long input1Len = conf.getLong("diagblock.input1.length", 1024 * 10);
+      long split0Len = conf.getLong("diagblock.split0.length", 128);
+      long split1Len = conf.getLong("diagblock.split1.length", 128);
+      int numBlocks = conf.getInt("diagblock.num.blocks", 16);
+      float randFactor = conf.getFloat("job.split.length.rand", 0.1f);
+      job.setInputs(
+          Arrays.asList(
+              new Segment(new Path("/data/cirshflblock.input0"), 0, input0Len),
+              new Segment(new Path("/data/cirshflblock.input1" + iteration), 
+                          0, input1Len)));
+      List<Segment> inputs = new ArrayList<Segment>();
+      List<String> indices = new ArrayList<String>();
+      inputs.addAll(getSplits("/data/cirshflblock.input0", input0Len,
+                              split0Len, randFactor));
+      int input0Size = inputs.size();
+      inputs.addAll(getSplits("/data/cirshflblock.input1" + iteration, 
+                              input1Len, split1Len, randFactor));
+      int input1Size = inputs.size() - input0Size;
+      for (int i = 0; i < input0Size; ++i) {
+        indices.add("input0_" + (i % numBlocks));
+      }
+      for (int i = 0; i < input1Size; ++i) {
+        indices.add("input1_" + (i % numBlocks));
+      }
+      job.formatTasks(indices, inputs);
+    }
+  }
+
+  static class RandShflBlock extends DiagBlock {
+
+    public RandShflBlock(Configuration conf) {
+      super(conf);
+    }
+
+    public void configJob(int iteration) {
+      long input0Len = conf.getLong("diagblock.input0.length", 1024 * 10);
+      long input1Len = conf.getLong("diagblock.input1.length", 1024 * 10);
+      long split0Len = conf.getLong("diagblock.split0.length", 128);
+      long split1Len = conf.getLong("diagblock.split1.length", 128);
+      int numBlocks = conf.getInt("diagblock.num.blocks", 16);
+      float randFactor = conf.getFloat("job.split.length.rand", 0.1f);
+      job.setInputs(
+          Arrays.asList(
+              new Segment(new Path("/data/randshflblock.input0"), 0, input0Len),
+              new Segment(new Path("/data/randshflblock.input1" + iteration), 
+                          0, input1Len)));
+      List<Segment> inputs = new ArrayList<Segment>();
+      List<String> indices = new ArrayList<String>();
+      inputs.addAll(getSplits("/data/randshflblock.input0", input0Len,
+                              split0Len, randFactor));
+      int input0Size = inputs.size();
+      inputs.addAll(getSplits("/data/randshflblock.input1" + iteration, 
+                              input1Len, split1Len, randFactor));
+      int input1Size = inputs.size() - input0Size;
+      for (int i = 0; i < input0Size; ++i) {
+        indices.add("input0_" + (i % numBlocks));
+      }
+      Collections.shuffle(indices);
+      List<String> indices1 = new ArrayList<String>();
+      for (int i = 0; i < input1Size; ++i) {
+        indices1.add("input1_" + (i % numBlocks));
+      }
+      Collections.shuffle(indices1);
+      indices.addAll(indices1);
+      job.formatTasks(indices, inputs);
+    }
+  }
+
+  static class RandPair extends SimJobClient {
+    float denseLevel;
+    Random r = new Random();
+
+    public class RandPairFilter implements Map2Filter {
+      public boolean accept(String s0, String s1) {
+        if (r.nextFloat() < denseLevel) return true;
+        return false;
+      }
+    }
+
+    public RandPair(Configuration conf) {
+      super(conf);
+      job.setFilter(new RandPairFilter());
+      denseLevel = conf.getFloat("randpair.dense.level", 0.2f);
+    }
+
+    public void configJob(int iteration) {
+      long input0Len = conf.getLong("randpair.input0.length", 1024 * 10);
+      long input1Len = conf.getLong("randpair.input1.length", 1024 * 10);
+      long splitLen = conf.getLong("randpair.split.length", 128);
+      float randFactor = conf.getFloat("job.split.length.rand", 0.1f);
+      job.setInputs(
+          Arrays.asList(
+              new Segment(new Path("/data/randpair.input0"), 0, input0Len),
+              new Segment(new Path("/data/randpair.input1" + iteration), 
+                          0, input1Len)));
+      List<Segment> inputs = new ArrayList<Segment>();
+      inputs.addAll(getSplits("/data/randpair.input0", input0Len,
+                              splitLen, randFactor));
+      inputs.addAll(getSplits("/data/randpair.input1" + iteration, 
+                              input0Len, splitLen, randFactor));
+      job.formatTasks(inputs);
+    }
+  }
+
   public static void main(String[] args) { 
     Configuration conf = new Configuration();
-    conf.addResource("test_scheduler.conf.xml");
-    int numIterations = conf.getInt("job.num.iterations", 1);
+    conf.addResource("sim-sched-conf.xml");
     try {
-      Class testClass = conf.getClass("job.class.name", 
-                                      Class.forName("TestScheduler$AllPairJob"));
-      System.out.println("Job " + testClass.toString());
+      Class JobClientClass = conf.getClass("job.class.name", 
+                                           Class.forName("TestScheduler$AllPair"));
+      System.out.println("Job " + JobClientClass.toString());
       Class[] paramType = new Class[1];
       paramType[0] = Configuration.class;
-      Constructor ctor = testClass.getDeclaredConstructor(paramType);
-      TestJobWrapper testJob = (TestJobWrapper) ctor.newInstance(conf);
-      SimDistributedSystem system = new SimDistributedSystem(conf);
-
-      for (int i = 0; i < numIterations; ++i) {
-        System.out.format("---------iteration: %d-------\n", i);
-        System.out.flush();
-        //system.submitJob(testJob.getJob());
-        //system.runJob(testJob.getJob());
-        testJob.update();
-      }
+      Constructor ctor = JobClientClass.getDeclaredConstructor(paramType);
+      SimJobClient client = (SimJobClient) ctor.newInstance(conf);
+      client.run();
     }
     catch (Exception e) {
-      System.out.println(e);
+      System.out.println("Exception: " + StringUtils.stringifyException(e));
       System.exit(-1);
     }
   }

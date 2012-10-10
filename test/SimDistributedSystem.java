@@ -36,13 +36,12 @@ public class SimDistributedSystem {
   private SimNode[] nodes;
   private Map<Segment, LinkedList<Integer>> replicaInfo;
 
-  public SimDistributedSystem() {
-    this.conf = new Configuration();
-    conf.addResource("sim-sched-conf.xml");
+  public SimDistributedSystem(Configuration conf) {
+    this.conf = conf;
     this.schedChoice = conf.getInt("node.schedule.choice", 0);
-    this.numNodes = conf.getInt("num.distributed.node", 100);
+    this.numNodes = conf.getInt("num.distributed.node", 16);
     this.numReplicas = conf.getInt("num.replicas", 3);
-    this.blockLen = conf.getInt("node.block.len", 64 * 1024 * 1024);
+    this.blockLen = conf.getInt("node.block.len", 64);
     this.nodes = new SimNode[numNodes];
     for (int i = 0; i < numNodes; ++i) {
       SimNode n = new SimNode(i);
@@ -73,8 +72,8 @@ public class SimDistributedSystem {
 
     public SimNode(int id) {
       nodeId = id;
-      this.diskCapacity = conf.getLong("node.disk.capacity", 1024 * 1024 * 1024 * 10);
-      this.memoryCapacity = conf.getLong("node.memory.capacity", 1024 * 1024 * 256);
+      this.diskCapacity = conf.getLong("node.disk.capacity", 1024 * 10);
+      this.memoryCapacity = conf.getLong("node.memory.capacity", 256);
       replicas = new HashSet<Segment>();
       cache = new LinkedList<Segment>();
     }
@@ -89,6 +88,9 @@ public class SimDistributedSystem {
     public void read(Segment s) {
       List<Segment> blocks = getSegmentBlocks(s);
       for (Segment b : blocks) {
+        if (replicaInfo.get(s) == null) {
+          throw new RuntimeException("Segment does not exist: " + b);
+        }
         if (replicas.contains(b)) {
           hits ++;
         }
@@ -102,11 +104,16 @@ public class SimDistributedSystem {
     public void cachedRead(Segment s) {
       List<Segment> blocks = getSegmentBlocks(s);
       for (Segment b : blocks) {
+        if (replicaInfo.get(s) == null) {
+          throw new RuntimeException("Segment does not exist: " + b);
+        }
         if ((replicas.contains(b)) || (hasCached(b))) {
           hits ++;
           continue;
         }
-        cache.pollFirst();
+        if (cache.size() * blockLen > diskCapacity) {
+          cache.pollFirst();
+        }
         cache.addLast(b);
         misses ++;
       }
@@ -183,7 +190,7 @@ public class SimDistributedSystem {
     }
   }
 
-  private void createReplicas(Collection<Segment> segments) {
+  public void createReplicas(Collection<Segment> segments) {
     for (Segment seg : segments) {
       List<Segment> blocks = getSegmentBlocks(seg);
       for (Segment b : blocks) {
