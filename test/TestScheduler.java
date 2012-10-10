@@ -46,7 +46,7 @@ class TestScheduler {
         splitList.add(
             new Segment(new Path("allpair.split1"), i*blockSize, blockSize));
       }
-      job.setSplits(splitList);
+      job.setInputs(splitList);
     }
 
   }
@@ -69,7 +69,7 @@ class TestScheduler {
         splitList.add(
             new Segment(new Path("allpair.split"), i*blockSize, blockSize));
       }
-      job.setSplits(splitList);
+      job.setInputs(splitList);
     }
 
   }
@@ -128,7 +128,7 @@ class TestScheduler {
           splitList.add(new Segment(new Path(name), off, len));
         }
       }
-      job.setSplits(splitList);
+      job.setInputs(splitList);
     }
   }
 
@@ -162,7 +162,7 @@ class TestScheduler {
           splitList.add(new Segment(new Path(name), off, len));
         }
       }
-      job.setSplits(splitList);
+      job.setInputs(splitList);
     }
 
     @Override
@@ -185,7 +185,7 @@ class TestScheduler {
           splitList.add(new Segment(new Path(name), off, len));
         }
       }
-      job.setSplits(splitList);
+      job.setInputs(splitList);
     }
 
   }
@@ -206,8 +206,8 @@ class TestScheduler {
       for (int i = 0; i < numIterations; ++i) {
         System.out.format("---------iteration: %d-------\n", i);
         System.out.flush();
-        system.submitJob(testJob.getJob());
-        system.runJob(testJob.getJob());
+        //system.submitJob(testJob.getJob());
+        //system.runJob(testJob.getJob());
         testJob.update();
       }
     }

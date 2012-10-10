@@ -39,7 +39,16 @@ public class SimDistributedSystem {
   public SimDistributedSystem() {
     this.conf = new Configuration();
     conf.addResource("sim-sched-conf.xml");
-    init();
+    this.schedChoice = conf.getInt("node.schedule.choice", 0);
+    this.numNodes = conf.getInt("num.distributed.node", 100);
+    this.numReplicas = conf.getInt("num.replicas", 3);
+    this.blockLen = conf.getInt("node.block.len", 64 * 1024 * 1024);
+    this.nodes = new SimNode[numNodes];
+    for (int i = 0; i < numNodes; ++i) {
+      SimNode n = new SimNode(i);
+      nodes[i] = n;
+    }
+    this.replicaInfo = new HashMap<Segment, LinkedList<Integer>>();
   }
 
   private List<Segment> getSegmentBlocks(Segment s) {
@@ -57,8 +66,8 @@ public class SimDistributedSystem {
     public final long diskCapacity;
     public final long memoryCapacity;
 
-    private Set<Segment> replicas
-    private List<Segment> cache;
+    private Set<Segment> replicas;
+    private LinkedList<Segment> cache;
     private int hits;
     private int misses;
 
@@ -68,10 +77,6 @@ public class SimDistributedSystem {
       this.memoryCapacity = conf.getLong("node.memory.capacity", 1024 * 1024 * 256);
       replicas = new HashSet<Segment>();
       cache = new LinkedList<Segment>();
-    }
-
-    public String toString() {
-      return "node#" + nodeId;
     }
 
     //replicas should be conformed to block configuration.
@@ -124,6 +129,7 @@ public class SimDistributedSystem {
 
     public String toString() {
       StringBuilder ret = new StringBuilder();
+      ret.append("node#" + nodeId + ". ");
       ret.append("d: " + diskCapacity + 
                  "m: " + memoryCapacity + " ");
       ret.append("r[" + replicas.size() + ": ");
@@ -177,24 +183,11 @@ public class SimDistributedSystem {
     }
   }
 
-  public void init() {
-    schedChoice = conf.getInt("node.schedule.choice", 0);
-    numNodes = conf.getInt("num.distributed.node", 100);
-    numReplicas = conf.getInt("num.replicas", 3);
-    blockLen = conf.getInt("node.block.len", 64 * 1024 * 1024);
-    nodes = new SimNode[numOfNodes];
-    for (int i = 0; i < numOfNodes; ++i) {
-      SimNode n = new SimNode(i);
-      nodes[i] = n;
-    }
-    replicaInfo = new HashMap<Segment, LinkedList<Integer>>();
-  }
-
   private void createReplicas(Collection<Segment> segments) {
     for (Segment seg : segments) {
       List<Segment> blocks = getSegmentBlocks(seg);
       for (Segment b : blocks) {
-        if (replicaInfo.get(s) != null) return;
+        if (replicaInfo.get(b) != null) return;
         Random r = new Random();
         LinkedList<Integer> locations = new LinkedList<Integer>();
         for (int i = 0; i < numReplicas; ++i) {
@@ -202,7 +195,7 @@ public class SimDistributedSystem {
           locations.add(nodeId);
           nodes[nodeId].addReplica(b);
         }
-        replicaInfo.put(s, locations);
+        replicaInfo.put(b, locations);
       }
     }
   }
@@ -221,12 +214,11 @@ public class SimDistributedSystem {
     return (float)totalHit / (float)totalMiss;
   }
 
-  private void runJobMap2(List<Segment[]> tasks) {
+  private void runJobMap2(SimJob job) {
     int finishedMaps = 0;
-    int hit = 0;
-    int miss = 0;
 
-    Map<Integer, Pack> memoryPacks = new HashMap<Integer, Pack>();
+    List<Segment[]> tasks = job.getTasks();
+    Map<Integer, Pack> memPacks = new HashMap<Integer, Pack>();
     Map<Integer, Pack> diskPacks = new HashMap<Integer, Pack>();
 
     MapTaskPacker packer = new MapTaskPacker(conf);
@@ -257,9 +249,9 @@ public class SimDistributedSystem {
             LOG.debug("Node: " + nodeIndex + " no disk pack available\n");
             try {
               diskPack = packer.obtainLastLevelPack(
-                  new Segments(node.getStaticSplits()),
-                  new Segments(node.getDynamicSplits()),
-                  node.getDiskCapacity(),
+                  new Segments(node.getReplicas()),
+                  new Segments(node.getCache()),
+                  node.diskCapacity,
                   nodes.length);
             }
             catch (Exception e) {
@@ -283,25 +275,25 @@ public class SimDistributedSystem {
           }
           try {
             memoryPack = packer.obtainSubpack(diskPack, 
-                                              node.getMemoryCapacity());
+                                              node.memoryCapacity);
           }
           catch (Exception e) {
             LOG.error("Exception: " + StringUtils.stringifyException(e));
             System.exit(-1);
           }
           if (memoryPack == null) {
-            LOG.debug("Node: " + nodeIndex + " finished a disk pack\n");
+            LOG.info("Node: " + nodeIndex + " finished a disk pack\n");
             diskPacks.remove(nodeIndex);
             continue;
           }
-          LOG.debug("Node: " + nodeIndex + '\n' + 
+          LOG.info("Node: " + nodeIndex + '\n' + 
                    "Level: " + "memory" + '\n' +
                    "Pack: " + '\n' + memoryPack.toString() + '\n');
           memPacks.put(nodeIndex, memoryPack);
         }
         task = memoryPack.getNext();
         if (task == null) {
-          LOG.debug("Node: " + nodeIndex + " finished a memory pack\n");
+          LOG.info("Node: " + nodeIndex + " finished a memory pack\n");
           memPacks.remove(nodeIndex);
         }
       }
@@ -315,84 +307,65 @@ public class SimDistributedSystem {
         }
         scheduledTasks.put(info, nodeIndex);
 
-        LOG.debug("Node: " + nodeIndex + " working on: \n" + 
-                  "split: " + task[0].toString() + '\n' + 
-                  "split: " + task[1].toString() + '\n');
-        if (node.hasInStatic(task[0]) || node.hasInDynamic(task[0]))
-          hit ++;
-        else
-          miss ++;
-        if (node.hasInStatic(task[1]) || node.hasInDynamic(task[1]))
-          hit ++;
-        else
-          miss ++;
-        cacheAt(task[0], nodeIndex);
-        cacheAt(task[1], nodeIndex);
+        LOG.info("Node: " + nodeIndex + " working on: \n" + 
+                  "seg0: " + task[0].toString() + '\n' + 
+                  "seg1: " + task[1].toString() + '\n');
+        getNode(nodeIndex).cachedRead(task[0]);
+        getNode(nodeIndex).cachedRead(task[1]);
         finishedMaps ++;
       }
     }
-    LOG.info("All tasks finsihed\n");
-    LOG.info("Hit: " + hit + " Miss: " + miss + '\n');
     if (!packer.isFinished()) {
       LOG.info("JoinTable:\n" + packer.joinTableToString());
       LOG.info("Groups:\n" + packer.groupsToString());
-    }
-
-    if (!packer.isFinished()) {
       System.exit(-1);
     }
+
+    LOG.info("All tasks finsihed\n");
+    LOG.info("Hit Rate: " + getHitRate());
   }
 
   private Map<Segment, Segment> buildCoverMap(List<Segment[]> segments) {
     HashMap<Segment, Segment> ret = new HashMap<Segment, Segment>();
     for (Segment[] segs : segments) {
       for (Segment s : segs) {
-        if (ret.contains(s)) continue;
+        if (ret.get(s) != null) continue;
         long off = (s.getOffset() / blockLen) * blockLen;
-        ret.add(s, new Segment(s.getPath(), off, blockLen));
+        ret.put(s, new Segment(s.getPath(), off, blockLen));
       }
     }
     return ret;
   }
 
-  private void runJobRandom(FakeJob job) {
-    LinkedList<Segment[]> taskList = new LinkedList<Segment[]>(
-        job.getTaskList());
+  private void runJobRandom(SimJob job) {
 
-    int hit = 0;
-    int miss = 0;
-
-    while(!taskList.isEmpty()) {
+    LinkedList<Segment[]> tasks = new LinkedList(job.getTasks());
+    while(!tasks.isEmpty()) {
       Random r = new Random();
       int nodeIndex = r.nextInt(nodes.length);
-      FakeNode node = getNode(nodeIndex);
-      Segment[] task = taskList.pop();
-      if (node.hasInStatic(task[0]) || node.hasInDynamic(task[0]))
-        hit ++;
-      else
-          miss ++;
-      if (node.hasInStatic(task[1]) || node.hasInDynamic(task[1]))
-        hit ++;
-      else
-        miss ++;
+      SimNode node = getNode(nodeIndex);
+      Segment[] task = tasks.pop();
+      node.read(task[0]);
+      node.read(task[1]);
     }
     LOG.info("All tasks finsihed\n");
-    LOG.info("Hit: " + hit + " Miss: " + miss + '\n');
+    LOG.info("Hit Rate: " + getHitRate());
   }
 
-  private void runJobLocality1(FakeJob job) {
+  private void runJobLocality1(SimJob job) {
+    List<Segment[]> tasks = job.getTasks();
     Map<Integer, LinkedList<Segment[]>> taskCache =
         new HashMap<Integer, LinkedList<Segment[]>>();
 
-    for (Segment[] pair : job.getTaskList()) {
-      List<Integer> locations = locationCache.get(pair[0]);
+    for (Segment[] pair : tasks) {
+      List<Integer> locations = replicaInfo.get(pair[0]);
       for (int i : locations) {
-        LinkedList<Segment[]> tasks = taskCache.get(i);
-        if (tasks == null) {
-          tasks = new LinkedList<Segment[]>();
-          taskCache.put(i, tasks);
+        LinkedList<Segment[]> nodeTasks = taskCache.get(i);
+        if (nodeTasks == null) {
+          nodeTasks = new LinkedList<Segment[]>();
+          taskCache.put(i, nodeTasks);
         }
-        tasks.add(pair);
+        nodeTasks.add(pair);
       }
     }
 
@@ -401,40 +374,32 @@ public class SimDistributedSystem {
 
 
     int finishedMaps = 0;
-    int hit = 0;
-    int miss = 0;
 
-    while (finishedMaps < job.getNumTasks()) {
+    while (finishedMaps < tasks.size()) {
       Random r = new Random();
       int nodeIndex = r.nextInt(nodes.length);
-      FakeNode node = getNode(nodeIndex);
-      LinkedList<Segment[]> tasks = taskCache.get(nodeIndex);
+      SimNode node = getNode(nodeIndex);
+      LinkedList<Segment[]> nodeTasks = taskCache.get(nodeIndex);
       Segment[] task = null;
-      if (!tasks.isEmpty()) {
-        task = tasks.pop();
+      if (!nodeTasks.isEmpty()) {
+        task = nodeTasks.pop();
       }
       if (task != null) {
         SegmentPair info = new SegmentPair(task[0], task[1]);
         if (!scheduledTasks.containsKey(info)) {
           scheduledTasks.put(info, nodeIndex);
           finishedMaps ++;
-          if (node.hasInStatic(task[0]) || node.hasInDynamic(task[0]))
-            hit ++;
-          else
-            miss ++;
-          if (node.hasInStatic(task[1]) || node.hasInDynamic(task[1]))
-            hit ++;
-          else
-          miss ++;
+          node.read(task[0]);
+          node.read(task[1]);
         }
       }
     }
 
     LOG.info("All tasks finsihed\n");
-    LOG.info("Hit: " + hit + " Miss: " + miss + '\n');
+    LOG.info("Hit Rate: " + getHitRate());
   }
 
-  public void runJob(FakeJob job) {
+  public void runJob(SimJob job) {
 
     LOG.info("start running job");
     switch (schedChoice) {

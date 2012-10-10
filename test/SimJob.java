@@ -13,42 +13,38 @@ import org.apache.hadoop.map2.Map2Filter;
 
 public class SimJob {
 
-  private List<Segment[]> taskList;
+  private List<Segment[]> tasks;
   private Map2Filter filter;
-  private Segment[] splits;
+  private Segment[] inputs;
 
   public void setFilter(Map2Filter filter) {
     this.filter = filter;
   }
 
-  public void setSplits(List<Segment> splits) {
-    this.splits = splits.toArray(new Segment[splits.size()]);
+  public void setInputs(List<Segment> inputs) {
+    this.inputs = inputs.toArray(new Segment[inputs.size()]);
   }
 
-  public Segment[] getSplits() {
-    return splits;
-  }
-
-  public void init() {
-    taskList = new ArrayList<Segment[]>();
-    for (int i = 0; i < splits.length; ++i) {
-      for (int j = i; j < splits.length; ++j) {
-        if (filter.accept(splits[i].toString(), 
-                          splits[j].toString())) {
-          Segment[] splitPair = new Segment[2];
-          splitPair[0] = splits[i];
-          splitPair[1] = splits[j];
-          taskList.add(splitPair);
+  public void formatInputs() {
+    tasks = new ArrayList<Segment[]>();
+    for (int i = 0; i < inputs.length; ++i) {
+      for (int j = i; j < inputs.length; ++j) {
+        if (filter.accept(inputs[i].toString(), 
+                          inputs[j].toString())) {
+          Segment[] pair = new Segment[2];
+          pair[0] = inputs[i];
+          pair[1] = inputs[j];
+          tasks.add(pair);
         }
       }
     }
   }
 
-  public List<Segment[]> getTaskList() {
-    return taskList;
+  public List<Segment[]> getTasks() {
+    return tasks;
   }
 
   public int getNumTasks() {
-    return taskList.size();
+    return tasks.size();
   }
 }

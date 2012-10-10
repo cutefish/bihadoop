@@ -2540,9 +2540,9 @@ public class JobInProgress {
             break;
           }
           diskPacks.put(host, diskPack);
-          LOG.info("Node: " + host + '\n' + 
-                   "Level: " + "disk" + '\n' +
-                   "Pack: " + '\n' + diskPack.toString() + '\n');
+          LOG.debug("Node: " + host + '\n' + 
+                    "Level: " + "disk" + '\n' +
+                    "Pack: " + '\n' + diskPack.toString() + '\n');
         }
         memoryPack = map2TaskPacker.obtainSubpack(
             diskPack, tts.getMemoryCacheCapacity());
