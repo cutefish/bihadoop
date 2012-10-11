@@ -180,19 +180,26 @@ public class Segments implements Writable {
     if (thatList.size() == 0) return ret;
     if (thisList.size() == 0) return null;
 
-    //since both lists are sorted, we can limit the search range.
-    int startIdx, endIdx;
-    Segment first = thisList.get(0);
-    Segment last = thisList.get(thisList.size() - 1);
-    Segment start = new Segment(first.getPath(), 0, 1);
-    Segment end = new Segment(last.getPath(),
-                              last.getOffset() + last.getLength() + 1, 1);
-    startIdx = Collections.binarySearch(thisList, start);
-    startIdx = (startIdx >= 0) ? startIdx : -(startIdx + 1);
-    endIdx = Collections.binarySearch(thisList, end);
-    endIdx = (endIdx >= 0) ? endIdx : -(endIdx + 1);
+    ////since both lists are sorted, we can limit the search range.
+    //int startIdx, endIdx;
+    //Segment first = thisList.get(0);
+    //Segment last = thisList.get(thisList.size() - 1);
+    //Segment start = new Segment(first.getPath(), 0, 1);
+    //Segment end = new Segment(last.getPath(),
+    //                          last.getOffset() + last.getLength() + 1, 1);
+    //startIdx = Collections.binarySearch(thisList, start);
+    //startIdx = (startIdx >= 0) ? startIdx : -(startIdx + 1);
+    //endIdx = Collections.binarySearch(thisList, end);
+    //endIdx = (endIdx >= 0) ? endIdx : -(endIdx + 1);
+    //if (endIdx > thatList.size()) endIdx = thatList.size();
 
-    for (int i = startIdx; i < endIdx; ++i) {
+    //for (int i = startIdx; i < endIdx; ++i) {
+    //  CoverInfo result = cover(thatList.get(i));
+    //  ret.add(result);
+    //}
+
+    // get all the infomation of the other group
+    for (int i = 0; i < thatList.size(); ++i) {
       CoverInfo result = cover(thatList.get(i));
       ret.add(result);
     }

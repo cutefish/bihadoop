@@ -359,7 +359,7 @@ public class MapTaskPacker {
       bestGroup = chooseGroup(staticCache, cacheSize, true);
     }
     if (bestGroup == null) return null;
-    LOG.debug("Best grouop: " + bestGroup.size() + 
+    LOG.debug("Best group: " + bestGroup.size() + 
               "[" + bestGroup.get(0).toString() + "]");
 
     //select the largest join set from the group
@@ -373,11 +373,15 @@ public class MapTaskPacker {
     // Half of the capacity is used for each input set to heuristically minimize
     //the average footprint of each task.
 
+    int squareSize = (int)Math.sqrt(maxPackSize);
+    squareSize = (squareSize == 0) ? 1 : squareSize;
+    int maxRowSize = Math.min(squareSize, joinSetPool.size());
+    int maxColSize = maxPackSize / maxRowSize;
+
     /// choose a join set that fits in the half capacity
     long cap = cacheSize / 2;
     Set<Segment> rowSet = new TreeSet<Segment>();
-    int size = (packRowSize == -1) ? 
-        ((int)Math.sqrt(maxPackSize)) : packRowSize;
+    int size = (packRowSize == -1) ?  maxRowSize : packRowSize;
     int num = 0;
     for (Segment seg : joinSetPool) {
       if (num >= size) break;
@@ -388,20 +392,19 @@ public class MapTaskPacker {
       num ++;
       cap -= info.remainLen;
     }
-    LOG.debug("rowSet size: " + rowSet.size());
+    LOG.debug("rowSet size: " + rowSet.size() + " remain cap: " + cap);
 
     /// choose tasks from the group keys
     Pack newPack = new Pack();
     List<Segment[]> deleteList = new ArrayList<Segment[]>();
-    cap = cacheSize / 2;
-    size = (packColSize == -1) ? 
-        ((int)Math.sqrt(maxPackSize)) : packColSize;
+    cap += cacheSize / 2;
+    size = (packColSize == -1) ?  maxColSize : packColSize;
     int colSize = 0;
     int packSize = 0;
     boolean finished = false;
     for (CoverInfo info : bestGroup) {
       LOG.debug("cover info:" + info);
-      if (colSize >= packColSize) break;
+      if (colSize >= size) break;
 
       //see if the join set has the segment we want
       boolean shouldPickThis = false;

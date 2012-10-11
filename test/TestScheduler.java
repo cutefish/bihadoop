@@ -19,13 +19,16 @@ public class TestScheduler {
     Random r = new Random();
     List<Segment> ret = new ArrayList<Segment>();
     long start, end;
+    int num = (int)(length / splitLen);
     start = end = 0;
+    int count = 0;
     while(true) {
       if (start >= length) break;
       long rLen = (long)(splitLen * rf);
       long thisLen = splitLen - rLen + 2 * r.nextInt((int)rLen);
       end = start + thisLen;
-      if (end > length) {
+      count ++;
+      if ((end > length) || (count == num)) {
         end = length;
         thisLen = end - start;
       }
@@ -61,7 +64,7 @@ public class TestScheduler {
       List<Segment> inputs = new ArrayList<Segment>();
       inputs.addAll(getSplits("/data/allpair.input0", input0Len,
                               splitLen, randFactor));
-      inputs.addAll(getSplits("/data/allpair.input1", input0Len,
+      inputs.addAll(getSplits("/data/allpair.input1", input1Len,
                               splitLen, randFactor));
       job.formatTasks(inputs);
     }
@@ -95,6 +98,8 @@ public class TestScheduler {
   }
 
   static class DiagBlock extends SimJobClient {
+
+    protected List<Segment> staticSplits = null;
 
     /**
      * Filter to form a diag block matrix.
@@ -136,8 +141,17 @@ public class TestScheduler {
                           0, input1Len)));
       List<Segment> inputs = new ArrayList<Segment>();
       List<String> indices = new ArrayList<String>();
-      inputs.addAll(getSplits("/data/diagblock.input0", input0Len,
-                              split0Len, randFactor));
+      if ((!conf.getBoolean("job.has.static", true))) {
+        inputs.addAll(getSplits("/data/diagblock.input0", input0Len,
+                                split0Len, randFactor));
+      }
+      else {
+        if (staticSplits == null) {
+          staticSplits = getSplits("/data/diagblock.input0", input0Len,
+                                   split0Len, randFactor);
+        }
+        inputs.addAll(staticSplits);
+      }
       int inputs0Size = inputs.size();
       inputs.addAll(getSplits("/data/diagblock.input1" + iteration, 
                               input1Len, split1Len, randFactor));
@@ -180,8 +194,17 @@ public class TestScheduler {
                           0, input1Len)));
       List<Segment> inputs = new ArrayList<Segment>();
       List<String> indices = new ArrayList<String>();
-      inputs.addAll(getSplits("/data/cirshflblock.input0", input0Len,
-                              split0Len, randFactor));
+      if ((!conf.getBoolean("job.has.static", true))) {
+        inputs.addAll(getSplits("/data/cirshflblock.input0", input0Len,
+                                split0Len, randFactor));
+      }
+      else {
+        if (staticSplits == null) {
+          staticSplits = getSplits("/data/cirshflblock.input0", input0Len,
+                                   split0Len, randFactor);
+        }
+        inputs.addAll(staticSplits);
+      }
       int input0Size = inputs.size();
       inputs.addAll(getSplits("/data/cirshflblock.input1" + iteration, 
                               input1Len, split1Len, randFactor));
@@ -197,6 +220,8 @@ public class TestScheduler {
   }
 
   static class RandShflBlock extends DiagBlock {
+
+    protected List<String> staticIndices = null;
 
     public RandShflBlock(Configuration conf) {
       super(conf);
@@ -216,16 +241,37 @@ public class TestScheduler {
                           0, input1Len)));
       List<Segment> inputs = new ArrayList<Segment>();
       List<String> indices = new ArrayList<String>();
-      inputs.addAll(getSplits("/data/randshflblock.input0", input0Len,
-                              split0Len, randFactor));
+      if ((!conf.getBoolean("job.has.static", true))) {
+        inputs.addAll(getSplits("/data/randshflblock.input0", input0Len,
+                                split0Len, randFactor));
+      }
+      else {
+        if (staticSplits == null) {
+          staticSplits = getSplits("/data/randshflblock.input0", input0Len,
+                                   split0Len, randFactor);
+        }
+        inputs.addAll(staticSplits);
+      }
       int input0Size = inputs.size();
       inputs.addAll(getSplits("/data/randshflblock.input1" + iteration, 
                               input1Len, split1Len, randFactor));
       int input1Size = inputs.size() - input0Size;
-      for (int i = 0; i < input0Size; ++i) {
-        indices.add("input0_" + (i % numBlocks));
+      if ((!conf.getBoolean("job.has.static", true))) {
+        for (int i = 0; i < input0Size; ++i) {
+          indices.add("input0_" + (i % numBlocks));
+        }
+        Collections.shuffle(indices);
       }
-      Collections.shuffle(indices);
+      else {
+        if (staticIndices == null) {
+          staticIndices = new ArrayList<String>();
+          for (int i = 0; i < input0Size; ++i) {
+            staticIndices.add("input0_" + (i % numBlocks));
+          }
+          Collections.shuffle(staticIndices);
+        }
+        indices.addAll(staticIndices);
+      }
       List<String> indices1 = new ArrayList<String>();
       for (int i = 0; i < input1Size; ++i) {
         indices1.add("input1_" + (i % numBlocks));
@@ -239,9 +285,12 @@ public class TestScheduler {
   static class RandPair extends SimJobClient {
     float denseLevel;
     Random r = new Random();
+    protected List<Segment> staticSplits = null;
 
     public class RandPairFilter implements Map2Filter {
       public boolean accept(String s0, String s1) {
+        if (!s0.contains("input0")) return false;
+        if (!s1.contains("input1")) return false;
         if (r.nextFloat() < denseLevel) return true;
         return false;
       }
@@ -266,6 +315,17 @@ public class TestScheduler {
       List<Segment> inputs = new ArrayList<Segment>();
       inputs.addAll(getSplits("/data/randpair.input0", input0Len,
                               splitLen, randFactor));
+      if ((!conf.getBoolean("job.has.static", true))) {
+        inputs.addAll(getSplits("/data/randpair.input0", input0Len,
+                                splitLen, randFactor));
+      }
+      else {
+        if (staticSplits == null) {
+          staticSplits = getSplits("/data/randpair.input0", input0Len,
+                                   splitLen, randFactor);
+        }
+        inputs.addAll(staticSplits);
+      }
       inputs.addAll(getSplits("/data/randpair.input1" + iteration, 
                               input0Len, splitLen, randFactor));
       job.formatTasks(inputs);

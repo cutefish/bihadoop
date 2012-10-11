@@ -36,6 +36,8 @@ public class SimDistributedSystem {
   private SimNode[] nodes;
   private Map<Segment, LinkedList<Integer>> replicaInfo;
 
+  private Set<Integer> freeNodes = new HashSet<Integer>();
+
   public SimDistributedSystem(Configuration conf) {
     this.conf = conf;
     this.schedChoice = conf.getInt("node.schedule.choice", 0);
@@ -50,11 +52,37 @@ public class SimDistributedSystem {
     this.replicaInfo = new HashMap<Segment, LinkedList<Integer>>();
   }
 
+  private void addFreeNodes() {
+    for (int i = 0; i < numNodes; ++i) {
+      freeNodes.add(i);
+    }
+  }
+
+  private int pickRandomFreeNode() {
+    Random r = new Random();
+    if (freeNodes.isEmpty()) {
+      addFreeNodes();
+    }
+    LOG.info("free nodes: " + freeNodes);
+    int i = r.nextInt(freeNodes.size());
+    int count = 0;
+    int ret = 0;
+    for (int node : freeNodes) {
+      if (i == count) {
+        ret = node;
+        break;
+      }
+      count ++;
+    }
+    freeNodes.remove(ret);
+    return ret;
+  }
+
   private List<Segment> getSegmentBlocks(Segment s) {
     List<Segment> ret = new ArrayList<Segment>();
-    long off = (s.getOffset() / blockLen) * blockLen;
-    long len = (s.getLength() / blockLen) * blockLen;
-    for (long i = 0; i < len; i += blockLen) {
+    long start = (s.getOffset() / blockLen) * blockLen;
+    long end = s.getOffset() + s.getLength();
+    for (long i = start; i < end; i += blockLen) {
       ret.add(new Segment(s.getPath(), i, blockLen));
     }
     return ret;
@@ -67,6 +95,7 @@ public class SimDistributedSystem {
 
     private Set<Segment> replicas;
     private LinkedList<Segment> cache;
+    private long cachedSize = 0;
     private int hits;
     private int misses;
 
@@ -88,14 +117,16 @@ public class SimDistributedSystem {
     public void read(Segment s) {
       List<Segment> blocks = getSegmentBlocks(s);
       for (Segment b : blocks) {
-        if (replicaInfo.get(s) == null) {
+        if (replicaInfo.get(b) == null) {
           throw new RuntimeException("Segment does not exist: " + b);
         }
         if (replicas.contains(b)) {
           hits ++;
+          LOG.info("read " + b.toString() + " : hit");
         }
         else {
           misses ++;
+          LOG.info("read " + b.toString() + " : miss");
         }
       }
     }
@@ -104,23 +135,45 @@ public class SimDistributedSystem {
     public void cachedRead(Segment s) {
       List<Segment> blocks = getSegmentBlocks(s);
       for (Segment b : blocks) {
-        if (replicaInfo.get(s) == null) {
+        if (replicaInfo.get(b) == null) {
           throw new RuntimeException("Segment does not exist: " + b);
         }
         if ((replicas.contains(b)) || (hasCached(b))) {
           hits ++;
+          //renew the footprint
+          cache.remove(b);
+          cache.addLast(b);
+          LOG.info("read " + b.toString() + " : hit");
           continue;
         }
-        if (cache.size() * blockLen > diskCapacity) {
-          cache.pollFirst();
+        if (cachedSize > diskCapacity) {
+          //remove the first that is not a replica
+          Segment toremove = null;
+          for (int i = 0; i < cache.size(); ++i) {
+            if (!replicas.contains(cache.get(i))) {
+              toremove = cache.get(i);
+              break;
+            }
+          }
+          if (toremove == null) {
+            throw new RuntimeException("no segment cached, but cache full");
+          }
+          LOG.info("disk size exceeds. " +
+                   " curr: " + cachedSize + 
+                   " cap: " + diskCapacity + 
+                   " toremove: " + toremove);
+          cache.remove(toremove);
+          cachedSize -= toremove.getLength();
         }
         cache.addLast(b);
+        cachedSize += b.getLength();
         misses ++;
+        LOG.info("read " + b.toString() + " : miss");
       }
     }
 
     public boolean hasCached(Segment b) {
-      int idx = Collections.binarySearch(cache, b);
+      int idx = cache.indexOf(b);
       if (idx < 0) return false;
       return true;
     }
@@ -137,8 +190,8 @@ public class SimDistributedSystem {
     public String toString() {
       StringBuilder ret = new StringBuilder();
       ret.append("node#" + nodeId + ". ");
-      ret.append("d: " + diskCapacity + 
-                 "m: " + memoryCapacity + " ");
+      ret.append("d: " + diskCapacity + ", " + 
+                 "m: " + memoryCapacity + ", ");
       ret.append("r[" + replicas.size() + ": ");
       for (Segment seg : replicas) {
         ret.append(seg.toString() + ", ");
@@ -194,7 +247,7 @@ public class SimDistributedSystem {
     for (Segment seg : segments) {
       List<Segment> blocks = getSegmentBlocks(seg);
       for (Segment b : blocks) {
-        if (replicaInfo.get(b) != null) return;
+        if (replicaInfo.get(b) != null) continue;
         Random r = new Random();
         LinkedList<Integer> locations = new LinkedList<Integer>();
         for (int i = 0; i < numReplicas; ++i) {
@@ -211,14 +264,17 @@ public class SimDistributedSystem {
     return nodes[nodeId];
   }
 
-  public float getHitRate() {
+  public String getHitRate() {
     int totalHit = 0;
     int totalMiss = 0;
     for (SimNode node : nodes) {
       totalHit += node.hits;
       totalMiss += node.misses;
     }
-    return (float)totalHit / (float)totalMiss;
+    return new String("hits: " + totalHit + 
+                      " misses: " + totalMiss + 
+                      " rate: "  + 
+                      (float)totalHit / (float)(totalHit + totalMiss));
   }
 
   private void runJobMap2(SimJob job) {
@@ -235,12 +291,33 @@ public class SimDistributedSystem {
     Map<SegmentPair, Integer> scheduledTasks = 
         new HashMap<SegmentPair, Integer>();
 
+    //this is used for default hadoop scheduling
+    Map<Integer, LinkedList<Segment[]>> taskCache =
+        new HashMap<Integer, LinkedList<Segment[]>>();
+
+    for (Segment[] pair : tasks) {
+      List<Segment> segments = getSegmentBlocks(pair[0]);
+      segments.addAll(getSegmentBlocks(pair[1]));
+      Set<Integer> locations = new HashSet<Integer>();
+      for (Segment seg : segments) {
+        List<Integer> locs = replicaInfo.get(seg);
+        locations.addAll(locs);
+      }
+      for (int i : locations) {
+        LinkedList<Segment[]> nodeTasks = taskCache.get(i);
+        if (nodeTasks == null) {
+          nodeTasks = new LinkedList<Segment[]>();
+          taskCache.put(i, nodeTasks);
+        }
+        nodeTasks.add(pair);
+      }
+    }
+
     LOG.info("finished initialization");
 
     while (finishedMaps < tasks.size()) {
       //a wild node appears
-      Random r = new Random();
-      int nodeIndex = r.nextInt(nodes.length);
+      int nodeIndex = pickRandomFreeNode();
       SimNode node = getNode(nodeIndex);
       LOG.info("node #" + nodeIndex + " asking for task." + 
                " info: " + node.toString());
@@ -253,7 +330,7 @@ public class SimDistributedSystem {
           LOG.info("Node: " + nodeIndex + " no memory pack available\n");
           Pack diskPack = diskPacks.get(nodeIndex);
           if (diskPack == null) {
-            LOG.debug("Node: " + nodeIndex + " no disk pack available\n");
+            LOG.info("Node: " + nodeIndex + " no disk pack available\n");
             try {
               diskPack = packer.obtainLastLevelPack(
                   new Segments(node.getReplicas()),
@@ -266,7 +343,7 @@ public class SimDistributedSystem {
               System.exit(-1);
             }
             if (diskPack == null) {
-              LOG.debug("Node: " + nodeIndex + 
+              LOG.info("Node: " + nodeIndex + 
                        " cannot get a disk level pack\n");
               break;
             }
@@ -276,7 +353,7 @@ public class SimDistributedSystem {
               break;
             }
             diskPacks.put(nodeIndex, diskPack);
-            LOG.debug("Node: " + nodeIndex + '\n' + 
+            LOG.info("Node: " + nodeIndex + '\n' + 
                      "Level: " + "disk" + '\n' +
                      "Pack: " + '\n' + diskPack.toString() + '\n');
           }
@@ -307,29 +384,73 @@ public class SimDistributedSystem {
 
       if (task != null) {
         SegmentPair info = new SegmentPair(task[0], task[1]);
-        if (scheduledTasks.containsKey(info)) {
-          LOG.error("Already exist\ntask: " + info.toString() +
-                   "\nnode: " + scheduledTasks.get(info));
-          System.exit(-1);
-        }
-        scheduledTasks.put(info, nodeIndex);
+        if (!scheduledTasks.containsKey(info)) {
+          scheduledTasks.put(info, nodeIndex);
 
-        LOG.info("Node: " + nodeIndex + " working on: \n" + 
-                  "seg0: " + task[0].toString() + '\n' + 
-                  "seg1: " + task[1].toString() + '\n');
-        getNode(nodeIndex).cachedRead(task[0]);
-        getNode(nodeIndex).cachedRead(task[1]);
-        finishedMaps ++;
+          LOG.info("Node: " + nodeIndex + " working on: \n" + 
+                   "seg0: " + task[0].toString() + '\n' + 
+                   "seg1: " + task[1].toString() + '\n');
+          node.cachedRead(task[0]);
+          node.cachedRead(task[1]);
+          finishedMaps ++;
+        }
+      }
+      else {
+        //task is still null, disk pack empty, we resort to the default
+        //locality1 scheduler.
+        LOG.info("using default locality1 scheduler");
+        LinkedList<Segment[]> nodeTasks = taskCache.get(nodeIndex);
+        if ((nodeTasks == null) && (!taskCache.isEmpty())) {
+          Random r = new Random();
+          int idx = r.nextInt(taskCache.size());
+          int count = 0;
+          for (int i : taskCache.keySet()) {
+            if (idx == count) {
+              nodeTasks = taskCache.get(i);
+              break;
+            }
+            count ++;
+          }
+        }
+        if (!nodeTasks.isEmpty()) {
+          task = nodeTasks.pop();
+        }
+        if (task != null) {
+          SegmentPair info = new SegmentPair(task[0], task[1]);
+          if (!scheduledTasks.containsKey(info)) {
+            scheduledTasks.put(info, nodeIndex);
+            LOG.info("Node: " + nodeIndex + " working on: \n" + 
+                     "seg0: " + task[0].toString() + '\n' + 
+                     "seg1: " + task[1].toString() + '\n');
+            node.cachedRead(task[0]);
+            node.cachedRead(task[1]);
+            finishedMaps ++;
+          }
+        }
+        if ((nodeTasks != null) && (nodeTasks.isEmpty())) {
+          taskCache.remove(nodeIndex);
+        }
       }
     }
-    if (!packer.isFinished()) {
-      LOG.info("JoinTable:\n" + packer.joinTableToString());
-      LOG.info("Groups:\n" + packer.groupsToString());
-      System.exit(-1);
+    if ((!packer.isFinished())) {
+      for (List<Segment[]> leftTasks : taskCache.values()) {
+        for (Segment[] task : leftTasks) {
+          SegmentPair info = new SegmentPair(task[0], task[1]);
+          if (!scheduledTasks.containsKey(info)) {
+            LOG.info("scheduledTasks size: " + scheduledTasks.size());
+            LOG.info("finishedMaps size: " + finishedMaps);
+            LOG.info("tasks size: " + tasks.size());
+            LOG.info("JoinTable:\n" + packer.joinTableToString());
+            LOG.info("Groups:\n" + packer.groupsToString());
+            LOG.info("task cache:\n" + taskCache.toString());
+            System.exit(-1);
+          }
+        }
+      }
     }
 
     LOG.info("All tasks finsihed\n");
-    LOG.info("Hit Rate: " + getHitRate());
+    LOG.info(getHitRate());
   }
 
   private Map<Segment, Segment> buildCoverMap(List<Segment[]> segments) {
@@ -348,24 +469,30 @@ public class SimDistributedSystem {
 
     LinkedList<Segment[]> tasks = new LinkedList(job.getTasks());
     while(!tasks.isEmpty()) {
-      Random r = new Random();
-      int nodeIndex = r.nextInt(nodes.length);
+      int nodeIndex = pickRandomFreeNode();
       SimNode node = getNode(nodeIndex);
       Segment[] task = tasks.pop();
       node.read(task[0]);
       node.read(task[1]);
     }
     LOG.info("All tasks finsihed\n");
-    LOG.info("Hit Rate: " + getHitRate());
+    LOG.info(getHitRate());
   }
 
   private void runJobLocality1(SimJob job) {
     List<Segment[]> tasks = job.getTasks();
+    LOG.info("total number of map tasks: " + tasks.size());
     Map<Integer, LinkedList<Segment[]>> taskCache =
         new HashMap<Integer, LinkedList<Segment[]>>();
 
     for (Segment[] pair : tasks) {
-      List<Integer> locations = replicaInfo.get(pair[0]);
+      List<Segment> segments = getSegmentBlocks(pair[0]);
+      segments.addAll(getSegmentBlocks(pair[1]));
+      Set<Integer> locations = new HashSet<Integer>();
+      for (Segment seg : segments) {
+        List<Integer> locs = replicaInfo.get(seg);
+        locations.addAll(locs);
+      }
       for (int i : locations) {
         LinkedList<Segment[]> nodeTasks = taskCache.get(i);
         if (nodeTasks == null) {
@@ -383,11 +510,22 @@ public class SimDistributedSystem {
     int finishedMaps = 0;
 
     while (finishedMaps < tasks.size()) {
-      Random r = new Random();
-      int nodeIndex = r.nextInt(nodes.length);
+      int nodeIndex = pickRandomFreeNode();
       SimNode node = getNode(nodeIndex);
       LinkedList<Segment[]> nodeTasks = taskCache.get(nodeIndex);
       Segment[] task = null;
+      if ((nodeTasks == null) && (!taskCache.isEmpty())) {
+        Random r = new Random();
+        int idx = r.nextInt(taskCache.size());
+        int count = 0;
+        for (int i : taskCache.keySet()) {
+          if (idx == count) {
+            nodeTasks = taskCache.get(i);
+            break;
+          }
+          count ++;
+        }
+      }
       if (!nodeTasks.isEmpty()) {
         task = nodeTasks.pop();
       }
@@ -403,7 +541,7 @@ public class SimDistributedSystem {
     }
 
     LOG.info("All tasks finsihed\n");
-    LOG.info("Hit Rate: " + getHitRate());
+    LOG.info(getHitRate());
   }
 
   public void runJob(SimJob job) {
