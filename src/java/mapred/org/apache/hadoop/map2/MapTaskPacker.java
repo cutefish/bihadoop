@@ -625,7 +625,7 @@ public class MapTaskPacker {
     }
 
     long end = System.currentTimeMillis();
-    LOG.info("Finish sub-packing in " + (end - start) + " ms.");
+    LOG.debug("Finish sub-packing in " + (end - start) + " ms.");
     return subPack;
   }
 

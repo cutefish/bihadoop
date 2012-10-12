@@ -63,7 +63,7 @@ public class SimDistributedSystem {
     if (freeNodes.isEmpty()) {
       addFreeNodes();
     }
-    LOG.info("free nodes: " + freeNodes);
+    LOG.debug("free nodes: " + freeNodes);
     int i = r.nextInt(freeNodes.size());
     int count = 0;
     int ret = 0;
@@ -122,11 +122,11 @@ public class SimDistributedSystem {
         }
         if (replicas.contains(b)) {
           hits ++;
-          LOG.info("read " + b.toString() + " : hit");
+          LOG.debug("read " + b.toString() + " : hit");
         }
         else {
           misses ++;
-          LOG.info("read " + b.toString() + " : miss");
+          LOG.debug("read " + b.toString() + " : miss");
         }
       }
     }
@@ -143,10 +143,10 @@ public class SimDistributedSystem {
           //renew the footprint
           cache.remove(b);
           cache.addLast(b);
-          LOG.info("read " + b.toString() + " : hit");
+          LOG.debug("read " + b.toString() + " : hit");
           continue;
         }
-        if (cachedSize > diskCapacity) {
+        if (cachedSize >= diskCapacity) {
           //remove the first that is not a replica
           Segment toremove = null;
           for (int i = 0; i < cache.size(); ++i) {
@@ -158,7 +158,7 @@ public class SimDistributedSystem {
           if (toremove == null) {
             throw new RuntimeException("no segment cached, but cache full");
           }
-          LOG.info("disk size exceeds. " +
+          LOG.debug("disk size exceeds. " +
                    " curr: " + cachedSize + 
                    " cap: " + diskCapacity + 
                    " toremove: " + toremove);
@@ -168,7 +168,7 @@ public class SimDistributedSystem {
         cache.addLast(b);
         cachedSize += b.getLength();
         misses ++;
-        LOG.info("read " + b.toString() + " : miss");
+        LOG.debug("read " + b.toString() + " : miss");
       }
     }
 
@@ -197,9 +197,22 @@ public class SimDistributedSystem {
         ret.append(seg.toString() + ", ");
       }
       ret.append("] ");
-      ret.append("c[" + cache.size() + ": ");
+      ret.append("    cr[" + cache.size() + ": ");
       for (Segment seg : cache) {
         ret.append(seg.toString() + ", ");
+      }
+      ret.append("] ");
+      int count = 0;
+      for (Segment seg : cache) {
+        if (!replicas.contains(seg)) {
+          count ++;
+        }
+      }
+      ret.append("    c[" + count + ": ");
+      for (Segment seg : cache) {
+        if (!replicas.contains(seg)) {
+          ret.append(seg.toString() + ", ");
+        }
       }
       ret.append("] ");
       return ret.toString();
@@ -319,18 +332,18 @@ public class SimDistributedSystem {
       //a wild node appears
       int nodeIndex = pickRandomFreeNode();
       SimNode node = getNode(nodeIndex);
-      LOG.info("node #" + nodeIndex + " asking for task." + 
-               " info: " + node.toString());
+      LOG.debug("node #" + nodeIndex + " asking for task.");
+      LOG.debug("node info: " + node.toString());
 
       //get a task
       Segment[] task = null;
       while (task == null) {
         Pack memoryPack = memPacks.get(nodeIndex);
         if (memoryPack == null) {
-          LOG.info("Node: " + nodeIndex + " no memory pack available\n");
+          LOG.debug("Node: " + nodeIndex + " no memory pack available\n");
           Pack diskPack = diskPacks.get(nodeIndex);
           if (diskPack == null) {
-            LOG.info("Node: " + nodeIndex + " no disk pack available\n");
+            LOG.debug("Node: " + nodeIndex + " no disk pack available\n");
             try {
               diskPack = packer.obtainLastLevelPack(
                   new Segments(node.getReplicas()),
@@ -343,12 +356,12 @@ public class SimDistributedSystem {
               System.exit(-1);
             }
             if (diskPack == null) {
-              LOG.info("Node: " + nodeIndex + 
+              LOG.debug("Node: " + nodeIndex + 
                        " cannot get a disk level pack\n");
               break;
             }
             if (diskPack.isEmpty()) {
-              LOG.info("Node: " + nodeIndex + 
+              LOG.debug("Node: " + nodeIndex + 
                        " pack empty, possibly capacity not enough\n");
               break;
             }
@@ -366,18 +379,18 @@ public class SimDistributedSystem {
             System.exit(-1);
           }
           if (memoryPack == null) {
-            LOG.info("Node: " + nodeIndex + " finished a disk pack\n");
+            LOG.debug("Node: " + nodeIndex + " finished a disk pack\n");
             diskPacks.remove(nodeIndex);
             continue;
           }
-          LOG.info("Node: " + nodeIndex + '\n' + 
+          LOG.debug("Node: " + nodeIndex + '\n' + 
                    "Level: " + "memory" + '\n' +
                    "Pack: " + '\n' + memoryPack.toString() + '\n');
           memPacks.put(nodeIndex, memoryPack);
         }
         task = memoryPack.getNext();
         if (task == null) {
-          LOG.info("Node: " + nodeIndex + " finished a memory pack\n");
+          LOG.debug("Node: " + nodeIndex + " finished a memory pack\n");
           memPacks.remove(nodeIndex);
         }
       }
@@ -387,7 +400,7 @@ public class SimDistributedSystem {
         if (!scheduledTasks.containsKey(info)) {
           scheduledTasks.put(info, nodeIndex);
 
-          LOG.info("Node: " + nodeIndex + " working on: \n" + 
+          LOG.debug("Node: " + nodeIndex + " working on: \n" + 
                    "seg0: " + task[0].toString() + '\n' + 
                    "seg1: " + task[1].toString() + '\n');
           node.cachedRead(task[0]);
@@ -398,7 +411,7 @@ public class SimDistributedSystem {
       else {
         //task is still null, disk pack empty, we resort to the default
         //locality1 scheduler.
-        LOG.info("using default locality1 scheduler");
+        LOG.debug("using default locality1 scheduler");
         LinkedList<Segment[]> nodeTasks = taskCache.get(nodeIndex);
         if ((nodeTasks == null) && (!taskCache.isEmpty())) {
           Random r = new Random();
@@ -419,7 +432,7 @@ public class SimDistributedSystem {
           SegmentPair info = new SegmentPair(task[0], task[1]);
           if (!scheduledTasks.containsKey(info)) {
             scheduledTasks.put(info, nodeIndex);
-            LOG.info("Node: " + nodeIndex + " working on: \n" + 
+            LOG.debug("Node: " + nodeIndex + " working on: \n" + 
                      "seg0: " + task[0].toString() + '\n' + 
                      "seg1: " + task[1].toString() + '\n');
             node.cachedRead(task[0]);
