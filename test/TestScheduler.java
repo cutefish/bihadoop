@@ -25,6 +25,7 @@ public class TestScheduler {
     while(true) {
       if (start >= length) break;
       long rLen = (long)(splitLen * rf);
+      rLen = (rLen == 0) ? 1 : rLen;
       long thisLen = splitLen - rLen + 2 * r.nextInt((int)rLen);
       end = start + thisLen;
       count ++;
@@ -55,7 +56,8 @@ public class TestScheduler {
     public void configJob(int iteration) {
       long input0Len = conf.getLong("allpair.input0.length", 1024 * 10);
       long input1Len = conf.getLong("allpair.input1.length", 1024 * 10);
-      long splitLen = conf.getLong("allpair.split.length", 128);
+      long split0Len = conf.getLong("allpair.split0.length", 128);
+      long split1Len = conf.getLong("allpair.split1.length", 128);
       float randFactor = conf.getFloat("job.split.length.rand", 0.1f);
       job.setInputs(
           Arrays.asList(
@@ -63,9 +65,9 @@ public class TestScheduler {
               new Segment(new Path("/data/allpair.input1"), 0, input1Len)));
       List<Segment> inputs = new ArrayList<Segment>();
       inputs.addAll(getSplits("/data/allpair.input0", input0Len,
-                              splitLen, randFactor));
+                              split0Len, randFactor));
       inputs.addAll(getSplits("/data/allpair.input1", input1Len,
-                              splitLen, randFactor));
+                              split1Len, randFactor));
       job.formatTasks(inputs);
     }
   }
@@ -84,8 +86,8 @@ public class TestScheduler {
     }
 
     public void configJob(int iteration) {
-      long inputLen = conf.getLong("halfallpair.input.length", 1024 * 10);
-      long splitLen = conf.getLong("halfallpair.split.length", 128);
+      long inputLen = conf.getLong("halfallpair.input0.length", 1024 * 10);
+      long splitLen = conf.getLong("halfallpair.split0.length", 128);
       float randFactor = conf.getFloat("job.split.length.rand", 0.1f);
       job.setInputs(
           Arrays.asList(
@@ -305,7 +307,8 @@ public class TestScheduler {
     public void configJob(int iteration) {
       long input0Len = conf.getLong("randpair.input0.length", 1024 * 10);
       long input1Len = conf.getLong("randpair.input1.length", 1024 * 10);
-      long splitLen = conf.getLong("randpair.split.length", 128);
+      long split0Len = conf.getLong("randpair.split0.length", 128);
+      long split1Len = conf.getLong("randpair.split1.length", 128);
       float randFactor = conf.getFloat("job.split.length.rand", 0.1f);
       job.setInputs(
           Arrays.asList(
@@ -313,21 +316,19 @@ public class TestScheduler {
               new Segment(new Path("/data/randpair.input1" + iteration), 
                           0, input1Len)));
       List<Segment> inputs = new ArrayList<Segment>();
-      inputs.addAll(getSplits("/data/randpair.input0", input0Len,
-                              splitLen, randFactor));
       if ((!conf.getBoolean("job.has.static", true))) {
         inputs.addAll(getSplits("/data/randpair.input0", input0Len,
-                                splitLen, randFactor));
+                                split0Len, randFactor));
       }
       else {
         if (staticSplits == null) {
           staticSplits = getSplits("/data/randpair.input0", input0Len,
-                                   splitLen, randFactor);
+                                   split0Len, randFactor);
         }
         inputs.addAll(staticSplits);
       }
       inputs.addAll(getSplits("/data/randpair.input1" + iteration, 
-                              input0Len, splitLen, randFactor));
+                              input1Len, split1Len, randFactor));
       job.formatTasks(inputs);
     }
   }

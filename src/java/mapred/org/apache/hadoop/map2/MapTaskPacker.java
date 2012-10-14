@@ -375,7 +375,8 @@ public class MapTaskPacker {
 
     int squareSize = (int)Math.sqrt(maxPackSize);
     squareSize = (squareSize == 0) ? 1 : squareSize;
-    int maxRowSize = Math.min(squareSize, joinSetPool.size());
+    int maxRowSize = Math.max(squareSize, maxPackSize / bestGroup.size());
+    maxRowSize = Math.min(maxRowSize, joinSetPool.size());
     int maxColSize = maxPackSize / maxRowSize;
 
     /// choose a join set that fits in the half capacity
@@ -447,7 +448,7 @@ public class MapTaskPacker {
 
     removePairs(deleteList);
     long end = System.currentTimeMillis();
-    LOG.info("Finished last level packing in " + (end - start) + " ms " );
+    LOG.debug("Finished last level packing in " + (end - start) + " ms " );
     return newPack;
   }
 

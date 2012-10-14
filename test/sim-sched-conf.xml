@@ -53,17 +53,21 @@
         <value>10240</value>
     </property>
     <property>
-        <name>allpair.split.length</name>
+        <name>allpair.split0.length</name>
+        <value>128</value>
+    </property>
+    <property>
+        <name>allpair.split1.length</name>
         <value>128</value>
     </property>
     <!-- half all pair-->
     <property>
-        <name>halfallpair.input.length</name>
+        <name>halfallpair.input0.length</name>
         <value>10240</value>
         <description>in MByte</description>
     </property>
     <property>
-        <name>halfallpair.split.length</name>
+        <name>halfallpair.split0.length</name>
         <value>128</value>
     </property>
     <!-- diag block -->
@@ -103,7 +107,11 @@
         <value>10240</value>
     </property>
     <property>
-        <name>randpair.split.length</name>
+        <name>randpair.split0.length</name>
+        <value>128</value>
+    </property>
+    <property>
+        <name>randpair.split1.length</name>
         <value>128</value>
     </property>
 </configuration>

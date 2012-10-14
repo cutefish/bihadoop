@@ -63,7 +63,6 @@ public class SimDistributedSystem {
     if (freeNodes.isEmpty()) {
       addFreeNodes();
     }
-    LOG.debug("free nodes: " + freeNodes);
     int i = r.nextInt(freeNodes.size());
     int count = 0;
     int ret = 0;
@@ -122,11 +121,13 @@ public class SimDistributedSystem {
         }
         if (replicas.contains(b)) {
           hits ++;
-          LOG.debug("read " + b.toString() + " : hit");
+          LOG.debug("node#" + nodeId +
+                    " read " + b.toString() + " : hit");
         }
         else {
           misses ++;
-          LOG.debug("read " + b.toString() + " : miss");
+          LOG.debug("node#" + nodeId + 
+                    " read " + b.toString() + " : miss");
         }
       }
     }
@@ -143,7 +144,8 @@ public class SimDistributedSystem {
           //renew the footprint
           cache.remove(b);
           cache.addLast(b);
-          LOG.debug("read " + b.toString() + " : hit");
+          LOG.debug("node#" + nodeId +
+                    " read " + b.toString() + " : hit");
           continue;
         }
         if (cachedSize >= diskCapacity) {
@@ -155,20 +157,23 @@ public class SimDistributedSystem {
               break;
             }
           }
-          if (toremove == null) {
+          if ((toremove == null) && (diskCapacity != 0)) {
             throw new RuntimeException("no segment cached, but cache full");
           }
-          LOG.debug("disk size exceeds. " +
-                   " curr: " + cachedSize + 
-                   " cap: " + diskCapacity + 
-                   " toremove: " + toremove);
-          cache.remove(toremove);
-          cachedSize -= toremove.getLength();
+          if (toremove != null) {
+            LOG.debug("disk size exceeds. " +
+                      " curr: " + cachedSize + 
+                      " cap: " + diskCapacity + 
+                      " toremove: " + toremove);
+            cache.remove(toremove);
+            cachedSize -= toremove.getLength();
+          }
         }
         cache.addLast(b);
         cachedSize += b.getLength();
         misses ++;
-        LOG.debug("read " + b.toString() + " : miss");
+        LOG.debug("node#" + nodeId + 
+                  " read " + b.toString() + " : miss");
       }
     }
 
@@ -284,9 +289,9 @@ public class SimDistributedSystem {
       totalHit += node.hits;
       totalMiss += node.misses;
     }
-    return new String("hits: " + totalHit + 
-                      " misses: " + totalMiss + 
-                      " rate: "  + 
+    return new String(">>hits: " + totalHit + 
+                      " >>misses: " + totalMiss + 
+                      " >>rate: "  + 
                       (float)totalHit / (float)(totalHit + totalMiss));
   }
 
@@ -525,6 +530,8 @@ public class SimDistributedSystem {
     while (finishedMaps < tasks.size()) {
       int nodeIndex = pickRandomFreeNode();
       SimNode node = getNode(nodeIndex);
+      LOG.debug("node #" + nodeIndex + " asking for task.");
+      LOG.debug("node info: " + node.toString());
       LinkedList<Segment[]> nodeTasks = taskCache.get(nodeIndex);
       Segment[] task = null;
       if ((nodeTasks == null) && (!taskCache.isEmpty())) {
@@ -534,23 +541,31 @@ public class SimDistributedSystem {
         for (int i : taskCache.keySet()) {
           if (idx == count) {
             nodeTasks = taskCache.get(i);
+            LOG.debug("steal task from node#" + i);
             break;
           }
           count ++;
         }
       }
-      if (!nodeTasks.isEmpty()) {
-        task = nodeTasks.pop();
+      else {
+        LOG.debug("get task from self queue");
       }
-      if (task != null) {
+      while(!nodeTasks.isEmpty()) {
+        task = nodeTasks.pop();
         SegmentPair info = new SegmentPair(task[0], task[1]);
         if (!scheduledTasks.containsKey(info)) {
           scheduledTasks.put(info, nodeIndex);
           finishedMaps ++;
+          LOG.debug("node#" + nodeIndex + 
+                    " seg0: " + task[0].toString() + 
+                    " seg1: " + task[1].toString());
           node.read(task[0]);
           node.read(task[1]);
+          break;
         }
       }
+      LOG.debug("node#" + nodeIndex + 
+                " task queue emptied or task executed");
     }
 
     LOG.info("All tasks finsihed\n");
