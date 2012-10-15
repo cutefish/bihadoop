@@ -1,4 +1,4 @@
-<project name="MRCaching" default="compile">
+<project name="BiHadoop" default="compile">
 
     <!--Specify external class path-->
     <property name="external.hadoop.home" location="/home/${user.name}/hadoop/hadoop-1.0.3" />

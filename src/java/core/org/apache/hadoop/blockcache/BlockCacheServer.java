@@ -46,6 +46,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   private static final String MEM_CACHE_CAPACITY = "block.cache.memory.capacity.per.user";
   private static final String LOCAL_DIR = "block.cache.local.dir";
   private static final String CACHE_REPLICA = "block.cache.should.cache.replica";
+  private static final String ALIGNED_BLOCK_SIZE = "block.cache.aligned.block.size";
 
   //default values
   private static final String LOCAL_HOST = "127.0.0.1";
@@ -53,6 +54,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   private static final long DEFAULT_CACHE_CAPACITY = 1024 * 1024 * 1024; //1G
   private static final String DEFAULT_CACHE_DIR = "/tmp/hadoop/blockcache";
   private static final long PREFETCH_SIZE = 10 * 64 * 1024 * 1024; //10 * 64M
+  private static final long DEFAULT_ALIGNMENT_SIZE = 64 * 1024 * 1024; //64M
 
   //default configuration
   private Configuration conf;
@@ -63,6 +65,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   private long memCacheSizePerUser;
   private String localCacheDir;
   private boolean cacheReplica = true;
+  private long alignedBlockSize;
   private Cache cache;
   private CacheFileFreeStore freeStore = new CacheFileFreeStore();
   private BlockCacheStatus prevStatus = new BlockCacheStatus();
@@ -91,6 +94,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
           "Cannot set local cache dir at " + localCacheDir);
     }
     cacheReplica = conf.getBoolean(CACHE_REPLICA, true);
+    alignedBlockSize = conf.getLong(ALIGNED_BLOCK_SIZE, DEFAULT_ALIGNMENT_SIZE);
 
     cache = new Cache();
     freeStoreThread = new Thread(freeStore);
@@ -205,6 +209,30 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       blocks = new ArrayList<BlockLocation>(
           Arrays.asList(
               fs.getFileBlockLocations(status, 0, PREFETCH_SIZE)));
+      blocks = alignBlocks(blocks);
+    }
+
+    //chop larger blocks to cache block size and create a new list
+    private List<BlockLocation> alignBlocks(List<BlockLocation> list) 
+        throws IOException {
+      List<BlockLocation> newBlocks = new ArrayList<BlockLocation>();
+      for (BlockLocation b : list) {
+        if (b.getLength() <= alignedBlockSize) {
+          newBlocks.add(b);
+          continue;
+        }
+        long currStart = b.getOffset();
+        long end = b.getOffset() + b.getLength();
+        while(currStart < end) {
+          long currEnd = ((currStart + alignedBlockSize) / 
+                          alignedBlockSize) * alignedBlockSize;
+          currEnd = (currEnd > end) ? end : currEnd;
+          newBlocks.add(new BlockLocation(b.getNames(), b.getHosts(),
+                                          currStart, currEnd - currStart));
+          currStart = currEnd;
+        }
+      }
+      return newBlocks;
     }
 
     BlockLocation getLocation(long off) throws IOException {
@@ -216,6 +244,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       List<BlockLocation> newBlocks = new ArrayList<BlockLocation>(
           Arrays.asList(
               fs.getFileBlockLocations(status, off, PREFETCH_SIZE)));
+      newBlocks = alignBlocks(newBlocks);
       int oldIdx = index;
       int insStart = 0, insEnd = 0;
       for (int newIdx = 0; newIdx < newBlocks.size() && oldIdx < blocks.size();

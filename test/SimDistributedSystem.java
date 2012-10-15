@@ -1,3 +1,4 @@
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -268,8 +269,21 @@ public class SimDistributedSystem {
         if (replicaInfo.get(b) != null) continue;
         Random r = new Random();
         LinkedList<Integer> locations = new LinkedList<Integer>();
+        //do not put replica on the same node twice
+        Set<SimNode> left = new HashSet<SimNode>(Arrays.asList(nodes));
         for (int i = 0; i < numReplicas; ++i) {
-          int nodeId = r.nextInt(numNodes);
+          int randCount = r.nextInt(left.size());
+          int count = 0;
+          SimNode picked = null;
+          for (SimNode n : left) {
+            if (count == randCount) {
+              picked = n;
+              break;
+            }
+            count ++;
+          }
+          left.remove(picked);
+          int nodeId = picked.nodeId;
           locations.add(nodeId);
           nodes[nodeId].addReplica(b);
         }

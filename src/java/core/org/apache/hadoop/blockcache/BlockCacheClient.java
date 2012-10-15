@@ -168,32 +168,37 @@ public class BlockCacheClient implements java.io.Closeable {
         break;
       }
 
+      //something wrong with the cache server, just throw exception here.
+      throw new IOException("Cache Server Unknown Failure. " + 
+                            "current position: " + pos + 
+                            " blockStart: " + blockStart + 
+                            " blockEnd: " + blockEnd);
+
       //we are here because we failed again during or after state update
       //just use back up stream for one block
       //this is very inefficient(high latency), but we expect it is rare.
-      FileStatus file = fs.getFileStatus(src);
-      if (pos >= file.getLen()) return -1;
-      BlockLocation[] blocks = fs.getFileBlockLocations(file, pos, 1);
-      if ((blocks == null) || (blocks.length == 0)) {
-        throw new IOException("No block information for path: " + src);
-      }
-      if (blocks.length > 1) {
-        throw new IOException("Too many block information at" + 
-                              " src: " + src.getName() + 
-                              " pos: " + pos);
-      }
-      blockStart = blocks[0].getOffset();
-      blockEnd = blockStart + blocks[0].getLength();
-      LOG.info("Reading using remote stream on block: " + 
-               blockStart + "-" + blocks[0].getLength() + 
-               " pos: " + pos);
-      int maxLength = (pos + len > blockEnd) ? 
-          (int)(blockEnd - pos) : len;
-      backupIn.seek(pos);
-      n = backupIn.read(buf, off, maxLength);
-      pos += n;
-      LOG.debug("Finish reading");
-      return n;
+//      FileStatus file = fs.getFileStatus(src);
+//      if (pos >= file.getLen()) return -1;
+//      BlockLocation[] blocks = fs.getFileBlockLocations(file, pos, 1);
+//      if ((blocks == null) || (blocks.length == 0)) {
+//        throw new IOException("No block information for path: " + src);
+//      }
+//      if (blocks.length > 1) {
+//        throw new IOException("Too many block information at" + 
+//                              " src: " + src.getName() + 
+//                              " pos: " + pos);
+//      }
+//      blockStart = blocks[0].getOffset();
+//      blockEnd = blockStart + blocks[0].getLength();
+//      LOG.info("Reading using remote stream on block: " + 
+//               blockStart + "-" + blocks[0].getLength() + 
+//               " pos: " + pos);
+//      int maxLength = (pos + len > blockEnd) ? 
+//          (int)(blockEnd - pos) : len;
+//      backupIn.seek(pos);
+//      n = backupIn.read(buf, off, maxLength);
+//      pos += n;
+//      return n;
     }
 
     private void updateState() throws IOException {
