@@ -432,6 +432,8 @@ public class SimDistributedSystem {
         //locality1 scheduler.
         LOG.debug("using default locality1 scheduler");
         LinkedList<Segment[]> nodeTasks = taskCache.get(nodeIndex);
+
+        int taskQueueIndex = nodeIndex;
         if ((nodeTasks == null) && (!taskCache.isEmpty())) {
           Random r = new Random();
           int idx = r.nextInt(taskCache.size());
@@ -439,31 +441,40 @@ public class SimDistributedSystem {
           for (int i : taskCache.keySet()) {
             if (idx == count) {
               nodeTasks = taskCache.get(i);
+              taskQueueIndex = i;
+              LOG.debug("steal task from node#" + i);
               break;
             }
             count ++;
           }
         }
-        if (!nodeTasks.isEmpty()) {
-          task = nodeTasks.pop();
+        else {
+          LOG.debug("get task from self queue");
         }
-        if (task != null) {
+        while(!nodeTasks.isEmpty()) {
+          task = nodeTasks.pop();
           SegmentPair info = new SegmentPair(task[0], task[1]);
           if (!scheduledTasks.containsKey(info)) {
             scheduledTasks.put(info, nodeIndex);
-            LOG.debug("Node: " + nodeIndex + " working on: \n" + 
-                     "seg0: " + task[0].toString() + '\n' + 
-                     "seg1: " + task[1].toString() + '\n');
-            node.cachedRead(task[0]);
-            node.cachedRead(task[1]);
             finishedMaps ++;
+            LOG.debug("node#" + nodeIndex + 
+                      " seg0: " + task[0].toString() + 
+                      " seg1: " + task[1].toString());
+            node.read(task[0]);
+            node.read(task[1]);
+            break;
           }
         }
-        if ((nodeTasks != null) && (nodeTasks.isEmpty())) {
-          taskCache.remove(nodeIndex);
+
+        if ((nodeTasks == null) || (nodeTasks.isEmpty())) {
+          taskCache.remove(taskQueueIndex);
         }
+
+        LOG.debug("node#" + nodeIndex + 
+                  " task queue emptied or task executed");
       }
     }
+
     if ((!packer.isFinished())) {
       for (List<Segment[]> leftTasks : taskCache.values()) {
         for (Segment[] task : leftTasks) {
@@ -548,6 +559,7 @@ public class SimDistributedSystem {
       LOG.debug("node info: " + node.toString());
       LinkedList<Segment[]> nodeTasks = taskCache.get(nodeIndex);
       Segment[] task = null;
+      int taskQueueIndex = nodeIndex;
       if ((nodeTasks == null) && (!taskCache.isEmpty())) {
         Random r = new Random();
         int idx = r.nextInt(taskCache.size());
@@ -555,6 +567,7 @@ public class SimDistributedSystem {
         for (int i : taskCache.keySet()) {
           if (idx == count) {
             nodeTasks = taskCache.get(i);
+            taskQueueIndex = i;
             LOG.debug("steal task from node#" + i);
             break;
           }
@@ -578,6 +591,11 @@ public class SimDistributedSystem {
           break;
         }
       }
+
+      if ((nodeTasks == null) || (nodeTasks.isEmpty())) {
+        taskCache.remove(taskQueueIndex);
+      }
+
       LOG.debug("node#" + nodeIndex + 
                 " task queue emptied or task executed");
     }

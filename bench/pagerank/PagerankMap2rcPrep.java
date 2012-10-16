@@ -15,6 +15,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
@@ -180,6 +181,7 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
   protected Path blkNodePath = null;
   protected Path tmpPath = null;
   protected Configuration conf = null;
+  protected String rxc = null;
 
   public static void main(final String[] args) {
     try {
@@ -197,7 +199,8 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
 
   protected static int printUsage() {
     System.out.println("PagerankMap2rcPrep " + 
-                       "<edgePath> <blkedgePath> <initNodePath>");
+                       "<edgePath> <blkedgePath> <initNodePath>" + 
+                       "[rxc]");
     return -1;
   }
 
@@ -206,9 +209,13 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
 		blkEdgePath = new Path(blkEdge);
     blkNodePath = new Path(blkNode);
   }
+  
+  public void setRxC(String rxc) {
+    this.rxc = rxc;
+  }
 
   public int run(final String[] args) throws Exception {
-    if (args.length != 3) {
+    if (args.length < 3 || args.length > 5) {
       return printUsage();
     }
 
@@ -220,10 +227,36 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
     checkValidity();
 
     setPaths(args[0], args[1], args[2]);
+    if (args.length == 4) {
+      setRxC(args[3]);
+    }
     blockEdges();
     initNodes();
 
     return 1;
+  }
+
+  class edgeFileFilter implements PathFilter {
+    //file name ...socljrc
+    public boolean accept(Path path) {
+      if (rxc == null) return true;
+      if (path.toString().endsWith("soclj")) return true;
+      try {
+        int R = Integer.parseInt(rxc.split("x")[0]);
+        int C = Integer.parseInt(rxc.split("x")[1]);
+        //extract the last two digit
+        String s = path.toString();
+        int r = Integer.parseInt(s.substring(s.length() - 2, s.length() - 1));
+        int c = Integer.parseInt(s.substring(s.length() - 1));
+        if (r < R && c < C) {
+          return true;
+        }
+        return false;
+      }
+      catch (Exception e) {
+        return false;
+      }
+    }
   }
 
   public int blockEdges() throws Exception {
@@ -337,6 +370,7 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
     job.setOutputKeyClass(Text.class);
     job.setOutputValueClass(Text.class);
     FileInputFormat.setInputPaths(job, edgePath);
+    FileInputFormat.setInputPathFilter(job, edgeFileFilter.class);
     FileOutputFormat.setOutputPath(job, tmpPath);
     return job;
   }

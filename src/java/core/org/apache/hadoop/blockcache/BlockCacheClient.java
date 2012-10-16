@@ -7,13 +7,14 @@ import java.net.URI;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.BlockLocation;
+import org.apache.hadoop.fs.BufferedFSInputStream;
 import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.StringUtils;
@@ -41,8 +42,8 @@ public class BlockCacheClient implements java.io.Closeable {
   public FSDataInputStream open(Path f, long versionId, int bufferSize, 
                                 FileSystem fs) throws IOException {
     LOG.debug("openning FSDataInputStream for path: " + f);
-    return new FSDataInputStream(new CachedFSInputStream(f, versionId,
-                                                         bufferSize, fs));
+    return new FSDataInputStream(new BufferedFSInputStream(
+            new CachedFSInputStream(f, versionId, bufferSize, fs), bufferSize));
   }
 
   public void close() {

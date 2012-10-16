@@ -1,4 +1,7 @@
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.io.IOException;
+import java.net.URI;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -11,11 +14,12 @@ public class TestCachedReadSeq {
   public static void main(String[] args) {
     try {
       if (args.length < 3) {
-        System.out.println("java TestCachedReadSeq file offset length cacheflag");
+        System.out.println("java TestCachedReadSeq <file> <offset> <length> " + 
+                           "[cacheflag]");
         System.exit(-1);
       }
 
-      String inputFile = "/data/" + args[0];
+      String inputFile = args[0];
       long offset = Long.parseLong(args[1]);
       long length = Long.parseLong(args[2]);
       boolean cacheflag = false;
@@ -26,12 +30,16 @@ public class TestCachedReadSeq {
       }
 
       Configuration conf = new Configuration();
-      conf.addResource("hdfs-default.xml");
-      conf.addResource("hdfs-site.xml");
-      System.out.format("fs.default.name:%s\n", conf.get("fs.default.name"));
-      System.out.format("dfs.replication:%d\n", conf.getInt("dfs.replication", 3));
+      //add s3 configurations
+      conf.set("fs.s3.awsAccessKeyId", System.getenv().get("AWSACCESSKEYID"));
+      conf.set("fs.s3n.awsAccessKeyId", System.getenv().get("AWSACCESSKEYID"));
+      conf.set("fs.s3.awsSecretAccessKey", 
+               System.getenv().get("AWSSECRETACCESSKEY"));
+      conf.set("fs.s3n.awsSecretAccessKey",
+               System.getenv().get("AWSSECRETACCESSKEY"));
 
-      FileSystem fs = FileSystem.get(conf);
+
+      FileSystem fs = FileSystem.get(new URI(inputFile), conf);
       Path filePath = new Path(inputFile);
 
       FSDataInputStream in;
@@ -52,18 +60,20 @@ public class TestCachedReadSeq {
       long interval = length / 10;
       int numDisp = 0;
       System.out.format("print interval: %d\n", interval);
-      byte[] buffer = new byte[4096];
 
       long start = System.currentTimeMillis();
 
+      BufferedReader d = new BufferedReader(new InputStreamReader(in));
+      int lineno = 0;
       while((bytesRead < length) && (n != -1)){
-        n = in.read(buffer);
+        String line = d.readLine();
+        n = line.length() + 1;
         if (n == -1) break;
+        lineno ++;
         bytesRead += n;
         if (bytesRead > numDisp * interval) {
-          String read = (new String(buffer)).substring(0, lineWidth - 1);
-          System.out.format("string read: %s, offset: %d\n",
-              read, bytesRead + offset);
+          System.out.format("string read: %s, offset: %d, lineno: %d\n",
+              line, bytesRead + offset, lineno);
           numDisp ++;
         }
       }

@@ -392,6 +392,7 @@ public class PagerankMap2rc extends Configured implements Tool {
   protected Path nodePath = null;
   protected Path outPath = null;
   protected Configuration conf = null;
+  protected String rxc = null;
 
   public static void main(final String[] args) {
     try {
@@ -407,12 +408,12 @@ public class PagerankMap2rc extends Configured implements Tool {
   }
 
   protected static int printUsage() {
-    System.out.println("PagerankMap2rc <edgePath> <outPath>");
+    System.out.println("PagerankMap2rc <edgePath> <outPath> [rxc]");
     return -1;
   }
 
   public int run(final String[] args) throws Exception {
-    if (args.length != 2) {
+    if (args.length < 2 || args.length > 4) {
       return printUsage();
     }
 
@@ -426,6 +427,9 @@ public class PagerankMap2rc extends Configured implements Tool {
 
     edgePath = new Path(args[0]);
     outPath = new Path(args[1]);
+    if (args.length == 3) {
+      rxc = args[2];
+    }
     FileSystem fs = FileSystem.get(conf);
     long start, end;
 
@@ -436,6 +440,7 @@ public class PagerankMap2rc extends Configured implements Tool {
     PagerankMap2rcPrep prepare = new PagerankMap2rcPrep();
     prepare.setPaths(edgePath.toString(), blkEdgePath.toString(),
                      initNodePath.toString());
+    prepare.setRxC(this.rxc);
 
     if (conf.getBoolean("pagerank.initialize", true)) {
       fs.delete(initNodePath, true);
