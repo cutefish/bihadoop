@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
@@ -181,7 +182,7 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
   protected Path blkNodePath = null;
   protected Path tmpPath = null;
   protected Configuration conf = null;
-  protected String rxc = null;
+  protected String rxc = "null";
 
   public static void main(final String[] args) {
     try {
@@ -211,6 +212,7 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
   }
   
   public void setRxC(String rxc) {
+    if (rxc == null) return;
     this.rxc = rxc;
   }
 
@@ -236,10 +238,28 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
     return 1;
   }
 
-  class edgeFileFilter implements PathFilter {
+  static class edgeFileFilter implements PathFilter, Configurable {
+
+    private Configuration conf;
+    private String rxc = "null";
+
+    @Override
+    public Configuration getConf() {
+      return this.conf;
+    }
+
+    @Override
+    public void setConf(Configuration conf) {
+      this.conf = conf;
+      this.rxc = conf.get("input.path.filter.rxc");
+    }
+
     //file name ...socljrc
     public boolean accept(Path path) {
-      if (rxc == null) return true;
+      if (rxc.equals("null")) {
+        System.out.println("choosing all. ");
+        return true;
+      }
       if (path.toString().endsWith("soclj")) return true;
       try {
         int R = Integer.parseInt(rxc.split("x")[0]);
@@ -249,6 +269,7 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
         int r = Integer.parseInt(s.substring(s.length() - 2, s.length() - 1));
         int c = Integer.parseInt(s.substring(s.length() - 1));
         if (r < R && c < C) {
+          System.out.println("path: " + path.toString());
           return true;
         }
         return false;
@@ -362,6 +383,7 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
   }
 
   private Job configStage1() throws Exception {
+    conf.set("input.path.filter.rxc", this.rxc);
     Job job = new Job(conf, "PagerankMap2rcPrep");
     job.setJarByClass(PagerankMap2rcPrep.class);
     job.setMapperClass(MapStage1.class);

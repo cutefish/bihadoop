@@ -371,6 +371,9 @@ public class NativeS3FileSystem extends FileSystem {
     URI pathUri = absolutePath.toUri();
     Set<FileStatus> status = new TreeSet<FileStatus>();
     String priorLastKey = null;
+    //added by xyu40@gatech.edu
+    boolean inputPathNotAdded = false;
+    //end xyu40@gatech.edu
     do {
       PartialListing listing = store.list(key, S3_MAX_LISTING_LENGTH, 
           priorLastKey);
@@ -382,6 +385,13 @@ public class NativeS3FileSystem extends FileSystem {
               relativePath.substring(0,
                   relativePath.indexOf(FOLDER_SUFFIX)))));
         } else {
+          //added by xyu40@gatech.edu
+          // do not add if it is the input path
+          if ((new Path(absolutePath, subpath)).equals(absolutePath)) {
+            inputPathNotAdded = true;
+            continue;
+          }
+          //end by xyu40@gatech.edu
           status.add(newFile(fileMetadata, subpath));
         }
       }
@@ -393,6 +403,16 @@ public class NativeS3FileSystem extends FileSystem {
       priorLastKey = listing.getPriorLastKey();
     } while (priorLastKey != null);
     
+    //added by xyu40@gatech.edu
+    //add input path f if it is empty.
+    // note: amazon s3 does not have a directory concept. we only know it is a
+    // directory by checking if there is a file names using the input path name
+    // as a prefix.
+    if (status.isEmpty() && inputPathNotAdded) {
+      status.add(newDirectory(new Path(absolutePath, "")));
+    }
+    //end xyu40@gatech.edu
+        
     if (status.isEmpty() &&
         store.retrieveMetadata(key + FOLDER_SUFFIX) == null) {
       return null;
@@ -402,13 +422,31 @@ public class NativeS3FileSystem extends FileSystem {
   }
   
   private FileStatus newFile(FileMetadata meta, Path path) {
-    return new FileStatus(meta.getLength(), false, 1, MAX_S3_FILE_SIZE,
-        meta.getLastModified(), path.makeQualified(this));
+    //modified by xyu40@gatech.edu
+    //dirty fix for ownership bug
+    //return new FileStatus(meta.getLength(), false, 1, MAX_S3_FILE_SIZE,
+    //    meta.getLastModified(), path.makeQualified(this));
+    return new FileStatus(meta.getLength(), false, 1, MAX_S3_FILE_SIZE, 
+                          0, 0, new FsPermission((short)0700),
+                          System.getProperty("user.name"), 
+                          System.getProperty("user.name"), 
+                          path.makeQualified(this));
+    //end xyu40@gatech.edu
+
   }
   
   private FileStatus newDirectory(Path path) {
-    return new FileStatus(0, true, 1, MAX_S3_FILE_SIZE, 0,
-        path.makeQualified(this));
+    //modified by xyu40@gatech.edu
+    //dirty fix for ownership bug
+    //return new FileStatus(0, true, 1, MAX_S3_FILE_SIZE, 0,
+    //    path.makeQualified(this));
+    return new FileStatus(0, true, 1, MAX_S3_FILE_SIZE, 
+                          0, 0, new FsPermission((short)0700),
+                          System.getProperty("user.name"), 
+                          System.getProperty("user.name"), 
+                          path.makeQualified(this));
+    //end xyu40@gatech.edu
+
   }
 
   @Override
