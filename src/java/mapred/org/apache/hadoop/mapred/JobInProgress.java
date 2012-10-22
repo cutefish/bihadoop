@@ -2523,10 +2523,8 @@ public class JobInProgress {
     while (task == null) {
       Pack memoryPack = memPacks.get(host);
       if (memoryPack == null) {
-        LOG.debug("Node: " + host + " no memory pack available\n");
         Pack diskPack = diskPacks.get(host);
         if (diskPack == null) {
-          LOG.debug("Node: " + host + " no disk pack available\n");
           diskPack = map2TaskPacker.obtainLastLevelPack(
               map2Info.getLocalSegments(host),
               tts.getCachedSegments(),
@@ -2536,7 +2534,7 @@ public class JobInProgress {
             break;
           }
           if (diskPack.isEmpty()) {
-            LOG.info("Node: " + host + " pack empty, possibly capacity not enough\n");
+            LOG.debug("Node: " + host + " pack empty, possibly capacity not enough\n");
             break;
           }
           diskPacks.put(host, diskPack);
@@ -2551,14 +2549,14 @@ public class JobInProgress {
           diskPacks.remove(host);
           continue;
         }
-        LOG.info("Node: " + host + '\n' + 
+        LOG.debug("Node: " + host + '\n' + 
                  "Level: " + "memory" + '\n' +
                  "Pack: " + '\n' + memoryPack.toString() + '\n');
         memPacks.put(host, memoryPack);
       }
       task = memoryPack.getNext();
       if (task == null) {
-        LOG.info("Node: " + host + " finished a memory pack\n");
+        LOG.debug("Node: " + host + " finished a memory pack\n");
         memPacks.remove(host);
       }
     }
