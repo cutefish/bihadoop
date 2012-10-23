@@ -2071,10 +2071,14 @@ public class DFSClient implements FSConstants, java.io.Closeable {
 
         //added by xyu40@gatech.edu
         if (isLocalAddress(targetAddr)) {
-          LOG.info("bihadoop==>local, hit");
+          LOG.info("bihadoop==>local, hit. src: " + src + 
+                   " target: " + target + 
+                   " targetAddr: " + targetAddr);
         }
         else {
-          LOG.info("bihadoop==>remote, miss");
+          LOG.info("bihadoop==>remote, miss. src: " + src + 
+                   " target: " + target + 
+                   " targetAddr: " + targetAddr);
         }
         //end by xyu40@gatech.edu
 
