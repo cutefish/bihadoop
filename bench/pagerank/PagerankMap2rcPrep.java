@@ -433,8 +433,8 @@ public class PagerankMap2rcPrep extends Configured implements Tool {
         int blockRowId = Integer.parseInt(keyStrings[1]);
         int blockColId = Integer.parseInt(keyStrings[2]);
         int numBlocks = Integer.parseInt(keyStrings[3]);
-        //return (blockColId * numBlocks + blockRowId) % numReduceTasks;
-        return (key.hashCode() & Integer.MAX_VALUE) % numReduceTasks;
+        return (blockColId * numBlocks + blockRowId) % numReduceTasks;
+        //return (key.hashCode() & Integer.MAX_VALUE) % numReduceTasks;
       }
       catch (Exception e) {
         return (key.hashCode() & Integer.MAX_VALUE) % numReduceTasks;
