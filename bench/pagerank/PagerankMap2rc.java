@@ -253,16 +253,20 @@ public class PagerankMap2rc extends Configured implements Tool {
       }
 
       //output ranks
+      long writeStart = System.currentTimeMillis();
+      long outSize = 0;
       for (Map.Entry<Integer, ByteArrayOutputStream> entry : outMap.entrySet()) {
         int blockId = entry.getKey();
         ByteArrayOutputStream out = entry.getValue();
         byte[] outBytes = out.toByteArray();
-        System.out.println("map output buffer length: " + outBytes.length);
+        outSize  += outBytes.length;
         context.write(new Text("" + blockId), new BytesWritable(outBytes));
       }
       end = System.currentTimeMillis();
       System.out.println("Processed edge " + bytesRead + " byte in " + (end - start) + " ms");
       System.out.println("Edge processing bandwidth: " + bytesRead / (end - start) / 1000 + " MByte/s");
+      System.out.println("Write " + outSize + " byte in " + (end - writeStart) + " ms");
+      System.out.println("Write bandwidth: " + outSize / (end - writeStart) / 1000 + " MByte/s");
     }
   }
 

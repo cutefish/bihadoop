@@ -2687,11 +2687,12 @@ public class JobInProgress {
       return false;
     } 
 
-    //modified by xyu40@gatech.edu
-    // for profiling
     LOG.info("Task '" + taskid + "' has completed " + tip.getTIPId() + 
-             " successfully" + 
-             " in " + (status.getFinishTime() - status.getStartTime()) + 
+             " successfully");
+    //added by xyu40@gatech.edu
+    // for profiling
+    LOG.info("==> task id: " + tip.getTIPId() + 
+             " time: " + (status.getFinishTime() - status.getStartTime()) + 
              " ms");          
     //end xyu40@gatech.edu
 
