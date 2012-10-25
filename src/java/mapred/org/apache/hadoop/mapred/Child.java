@@ -165,11 +165,10 @@ class Child {
 
     final JvmContext jvmContext = context;
     try {
-      //added by xyu40@gatech.edu
-      long taskStart = System.currentTimeMillis();
-      TaskAttemptID logTaskId = null;
-      //end xyu40@gatech.edu
       while (true) {
+        //added by xyu40@gatech.edu
+        long taskStart = System.currentTimeMillis();
+        //end xyu40@gatech.edu
         taskid = null;
         currentJobSegmented = true;
 
@@ -195,9 +194,6 @@ class Child {
         task = myTask.getTask();
         task.setJvmContext(jvmContext);
         taskid = task.getTaskID();
-        //added by xyu40@gatech.edu
-        logTaskId = taskid;
-        //end xyu40@gatech.edu
 
         // Create the JobConf and determine if this job gets segmented task logs
         final JobConf job = new JobConf(task.getJobFile());
@@ -272,15 +268,15 @@ class Child {
             return null;
           }
         });
+        //added by xyu40@gatech.edu
+        long taskEnd = System.currentTimeMillis();
+        LOG.info("==>task child: " + taskid + 
+                 " time: " + (taskEnd - taskStart) + " ms");
+        //end xyu40@gatech.edu
         if (numTasksToExecute > 0 && ++numTasksExecuted == numTasksToExecute) {
           break;
         }
       }
-      //added by xyu40@gatech.edu
-      long taskEnd = System.currentTimeMillis();
-      LOG.info("==>task child: " + logTaskId + 
-               " time: " + (taskEnd - taskStart) + " ms");
-      //end xyu40@gatech.edu
     } catch (FSError e) {
       LOG.fatal("FSError from child", e);
       umbilical.fsError(taskid, e.getMessage(), jvmContext);

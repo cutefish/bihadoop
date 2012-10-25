@@ -316,8 +316,6 @@ public class PagerankMap2rc extends Configured implements Tool {
       for (BytesWritable val : values) {
         ByteBuffer bbuf = ByteBuffer.wrap(val.getBytes());
         int length = val.getLength();
-        System.out.println("key: " + key.toString() + 
-                           " length: " + length);
         byte[] header = new byte[4];
         header[0] = bbuf.get();
         header[1] = bbuf.get();
