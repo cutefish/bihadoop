@@ -84,22 +84,22 @@ def runTest(schedType, reCap, pattern, lenRand, lenConfig, numExprs):
     print '==>>', 'average rate: ', rave, ' std: ', rstd
 
 def runCompleteTest():
-    patternOptions = ['ap', 'hap', 'db', 'csb', 'rsb',
-                      'rp#0.2', 'rp#0.4', 'rp#0.8',
-                      'idb', 'irp#0.2', 'irp#0.4', 'irp#0.8']
+    conf = config.Configuration()
+    conf.addResources('conf/sim-test-conf.xml')
+    patternOptions = conf.getStrings('sim.test.patterns')
     for p in patternOptions:
-        recordLenOptions = [32, 64, 128, 256]
+        recordLenOptions = conf.getIntRange('sim.test.recordLen')
         for l in recordLenOptions:
-            lenRandOptions = [0.1, 0.5, 0.9]
+            lenRandOptions = map(float, conf.getStrings('sim.test.lenRand'))
             for r in lenRandOptions:
-                numTasksOptions = [1, 4, 16]
+                numTasksOptions = conf.getIntRange('sim.test.numTasks')
                 for t in numTasksOptions:
-                    schedOptions = [0, 1, 2]
+                    schedOptions = conf.getIntRange('sim.test.sched')
                     for s in schedOptions:
                         if (s == 0):
-                            capOptions = [64, 256, 1024, 4096]
+                            capOptions = conf.getIntRange('sim.test.cache.cap')
                         else:
-                            capOptions = [3, 8, 16, 32]
+                            capOptions = conf.getIntRange('sim.test.replica.cap')
                         for c in capOptions:
                             if p.endswith('b'):
                                 lenConf = '%s#%s#%s#%s#%s' %(
