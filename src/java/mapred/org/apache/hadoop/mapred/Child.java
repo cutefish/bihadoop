@@ -251,9 +251,8 @@ class Child {
 
         //added by xyu40@gatech.edu
         end = System.currentTimeMillis();
-        LOG.info("==>prepare. tid: " + taskid + 
+        LOG.info("==>child prepare. tid: " + taskid + 
                  " time: " + (end - start) + " ms");
-        start = System.currentTimeMillis();
         //end xyu40@gatech.edu
         
         // Create a final reference to the task for the doAs block
@@ -263,8 +262,22 @@ class Child {
           public Object run() throws Exception {
             try {
               // use job-specified working directory
+
+              //added by xyu40@gatech.edu
+              long s, e;
+              s = System.currentTimeMillis();
               FileSystem.get(job).setWorkingDirectory(job.getWorkingDirectory());
+              e = System.currentTimeMillis();
+              LOG.info("==>child task set work dir." + 
+                       " tid: " + taskid + 
+                       " time: " + (e - s) + " ms");
+
+              s = System.currentTimeMillis();
               taskFinal.run(job, umbilical);        // run the task
+              e = System.currentTimeMillis();
+              LOG.info("==>child task run." + 
+                       " tid: " + taskid + 
+                       " time: " + (e - s) + " ms");
             } finally {
               TaskLog.syncLogs
                 (logLocation, taskid, isCleanup, logIsSegmented(job));
