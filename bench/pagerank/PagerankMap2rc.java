@@ -68,6 +68,7 @@ public class PagerankMap2rc extends Configured implements Tool {
     public void setup(Context context)
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
+      System.out.println("tid: " + conf.get("mapred.task.id"));
       fs = FileSystem.get(conf);
       numNodes = conf.getInt("pagerank.num.nodes", 1);
       numRowBlocks = conf.getInt("pagerank.num.row.blocks", -1);
@@ -102,6 +103,10 @@ public class PagerankMap2rc extends Configured implements Tool {
                     final Context context)
         throws IOException, InterruptedException {
 
+      long start, end;
+
+      start = System.currentTimeMillis();
+
       int edgeIdx = 0;
       int nodeIdx = 0;
       if (indices[0].contains("edge")) {
@@ -133,17 +138,19 @@ public class PagerankMap2rc extends Configured implements Tool {
       Configuration conf = context.getConfiguration();
       long edgeVersionId = conf.getLong("pagerank.edge.versionId", 0);
       long nodeVersionId = conf.getLong("pagerank.node.versionId", 0);
-      long start, end;
 
       context.setStatus("reading node vector: " + indices[nodeIdx] + 
                         " nodeSgmt: " + nodeSgmt);
+
+      end = System.currentTimeMillis();
+      System.out.println("prepare time: " + (end - start) + " ms");
 
       /**
        * We store the previous rank in a array then combine them into a byte
        * array, every node has a rank.
        */
-      double[] prevRank = new double[colBlockSize];
       start = System.currentTimeMillis();
+      double[] prevRank = new double[colBlockSize];
       if (useCache) {
         in = fs.openCachedReadOnly(nodeSgmt.getPath(), nodeVersionId);
       }
@@ -184,12 +191,12 @@ public class PagerankMap2rc extends Configured implements Tool {
       System.out.println("Node processing bandwidth: " + bytesRead / (end - start) / 1000 + " MByte/s");
 
       // read edge matrix
+      start = System.currentTimeMillis();
       context.setStatus("reading edge matrix: " + indices[edgeIdx] + 
                         " edgeSgmt: " + edgeSgmt);
       double[] rankArray = new double[rowBlockSize];
       //identify zero xferProb to shrink the output size
       Arrays.fill(rankArray, -10.0);
-      start = System.currentTimeMillis();
       if (useCache) {
         in = fs.openCachedReadOnly(edgeSgmt.getPath(), edgeVersionId);
       }

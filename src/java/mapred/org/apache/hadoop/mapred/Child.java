@@ -168,6 +168,8 @@ class Child {
       while (true) {
         //added by xyu40@gatech.edu
         long taskStart = System.currentTimeMillis();
+        long start, end;
+        start = System.currentTimeMillis();
         //end xyu40@gatech.edu
         taskid = null;
         currentJobSegmented = true;
@@ -246,6 +248,13 @@ class Child {
         for(Token<?> token : UserGroupInformation.getCurrentUser().getTokens()) {
           childUGI.addToken(token);
         }
+
+        //added by xyu40@gatech.edu
+        end = System.currentTimeMillis();
+        LOG.info("==>prepare. tid: " + taskid + 
+                 " time: " + (end - start) + " ms");
+        start = System.currentTimeMillis();
+        //end xyu40@gatech.edu
         
         // Create a final reference to the task for the doAs block
         final Task taskFinal = task;
@@ -269,6 +278,10 @@ class Child {
           }
         });
         //added by xyu40@gatech.edu
+        end = System.currentTimeMillis();
+        LOG.info("==>task run. tid: " + taskid + 
+                 " time: " + (end - start) + " ms");
+
         long taskEnd = System.currentTimeMillis();
         LOG.info("==>task child: " + taskid + 
                  " time: " + (taskEnd - taskStart) + " ms");
