@@ -312,6 +312,9 @@ public class PagerankMap2rc extends Configured implements Tool {
                        final Context context) 
         throws IOException, InterruptedException {
 
+      long start, end;
+      start = System.currentTimeMillis();
+
       int blockColId = Integer.parseInt(key.toString());
       int left = numNodes - numColBlocks * (numNodes / numColBlocks);
       int colBlockSize = numNodes / numColBlocks + 
@@ -387,6 +390,10 @@ public class PagerankMap2rc extends Configured implements Tool {
       }
 
       context.write(new Text("node\t" + key), bbuf.array());
+
+      end = System.currentTimeMillis();
+      
+      System.out.println("reduce function finish in " + (end - start) + " ms");
     }
   }
 

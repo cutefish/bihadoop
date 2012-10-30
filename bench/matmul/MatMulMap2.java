@@ -39,6 +39,7 @@ public class MatMulMap2 {
     public void setup(Context context) 
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
+      System.out.println("tid: " + conf.get("mapred.task.id"));
       fs = FileSystem.get(conf);
       int blockSize = conf.getInt("matmul.block.size", 1);
       numRowsInBlock = conf.getInt("matmul.num.rows.in.block", 1);
