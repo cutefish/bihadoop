@@ -3706,6 +3706,12 @@ public class JobInProgress {
       LOG.info(summary);
 
       //added by xyu40@gatech.edu
+      job.perfstat.reduceStartTime = 
+          (job.perfstat.reduceStartTime == 0) ? 
+          job.perfstat.mapEndTime : job.perfstat.reduceStartTime;
+      job.perfstat.reduceEndTime = 
+          (job.perfstat.reduceEndTime == 0) ? 
+          job.perfstat.mapEndTime : job.perfstat.reduceEndTime;
       LOG.info("==>" + job.getJobID() + 
                " perf summary. " + 
                " jobStartTime: " + job.perfstat.jobStartTime + 
