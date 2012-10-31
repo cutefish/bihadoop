@@ -85,7 +85,8 @@ public class MatMulMap2 {
         in = fs.open(segB.getPath());
       }
       in.seek(segB.getOffset());
-      dataIn = new DataInputStream(new BufferedInputStream(in));
+      //dataIn = new DataInputStream(new BufferedInputStream(in));
+      dataIn = new DataInputStream(in);
       for (int i = 0; i < size; ++i) {
         matrixBlockB[i] = dataIn.readDouble();
       }
@@ -113,7 +114,8 @@ public class MatMulMap2 {
         in = fs.open(segA.getPath());
       }
       in.seek(segA.getOffset());
-      dataIn = new DataInputStream(new BufferedInputStream(in));
+      //dataIn = new DataInputStream(new BufferedInputStream(in));
+      dataIn = new DataInputStream(in);
       long readTime = 0, calcTime = 0;
       for (int i = 0; i < numRowsInBlock; ++i) {
         double[] rowA = new double[numColsInBlock];

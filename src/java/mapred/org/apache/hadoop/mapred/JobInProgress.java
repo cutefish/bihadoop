@@ -83,6 +83,22 @@ import org.apache.hadoop.map2.MapTaskPacker.Pack;
  * ***********************************************************
  */
 public class JobInProgress {
+
+  //added by xyu40@gatech.edu
+  //  Profiling timer
+  private class PerfStat {
+    public long jobStartTime = 0;
+    public long mapStartTime = 0;
+    public long reduceStartTime = 0;
+    public long mapEndTime = 0;
+    public long reduceEndTime = 0;
+    public long jobEndTime = 0;
+  }
+
+  public PerfStat perfstat = new PerfStat();
+  //end xyu40@gatech.edu
+
+
   /**
    * Used when the a kill is issued to a job which is initializing.
    */
@@ -401,6 +417,9 @@ public class JobInProgress {
       this.jobtracker.getInstrumentation().addPrepJob(conf, jobId);
       // Add the queue-level metric below (after the profile has been initialized)
       this.startTime = jobtracker.getClock().getTime();
+      //added by xyu40@gatech.edu
+      perfstat.jobStartTime = this.startTime;
+      //end xyu40@gatech.edu
       status.setStartTime(startTime);
       this.localFs = jobtracker.getLocalFileSystem();
 
@@ -936,6 +955,9 @@ public class JobInProgress {
   synchronized void updateJobInfo(long startTime, long launchTime) {
     // log and change to the job's start/launch time
     this.startTime = startTime;
+    //added by xyu40@gatech.edu
+    perfstat.jobStartTime = this.startTime;
+    //end xyu40@gatech.edu
     this.launchTime = launchTime;
     JobHistory.JobInfo.logJobInfo(jobId, startTime, launchTime);
   }
@@ -1254,9 +1276,17 @@ public class JobInProgress {
       if (tip.isMapTask()) {
           this.status.setMapProgress((float) (this.status.mapProgress() +
                                               progressDelta / maps.length));
+          //added by xyu40@gatech.edu
+          // update every time so that we can get the last map task end time.
+          perfstat.mapEndTime = tip.getExecFinishTime();
+          //end xyu40@gatech.edu
       } else {
         this.status.setReduceProgress((float) (this.status.reduceProgress() + 
                                            (progressDelta / reduces.length)));
+        //added by xyu40@gatech.edu
+        // update every time so that we can get the last reduce task end time.
+        perfstat.reduceEndTime = tip.getExecFinishTime();
+        //end xyu40@gatech.edu
       }
     }
   }
@@ -1364,6 +1394,11 @@ public class JobInProgress {
     if (result != null) {
       addRunningTaskToTIP(maps[target], result.getTaskID(), tts, true);
       resetSchedulingOpportunities();
+      //added by xyu40@gatech.edu
+      if (perfstat.mapStartTime == 0) {
+        perfstat.mapStartTime = maps[target].getExecStartTime();
+      }
+      //end xyu40@gatech.edu
     }
 
     return result;
@@ -1428,6 +1463,11 @@ public class JobInProgress {
     if (result != null) {
       addRunningTaskToTIP(maps[target], result.getTaskID(), tts, true);
       resetSchedulingOpportunities();
+      //added by xyu40@gatech.edu
+      if (perfstat.mapStartTime == 0) {
+        perfstat.mapStartTime = maps[target].getExecStartTime();
+      }
+      //end xyu40@gatech.edu
     }
 
     return result;
@@ -1453,6 +1493,11 @@ public class JobInProgress {
     if (result != null) {
       addRunningTaskToTIP(maps[target], result.getTaskID(), tts, true);
       resetSchedulingOpportunities();
+      //added by xyu40@gatech.edu
+      if (perfstat.mapStartTime == 0) {
+        perfstat.mapStartTime = maps[target].getExecStartTime();
+      }
+      //end xyu40@gatech.edu
     }
 
     return result;
@@ -1479,6 +1524,11 @@ public class JobInProgress {
     if (result != null) {
       addRunningTaskToTIP(maps[target], result.getTaskID(), tts, true);
       // DO NOT reset for off-switch!
+      //added by xyu40@gatech.edu
+      if (perfstat.mapStartTime == 0) {
+        perfstat.mapStartTime = maps[target].getExecStartTime();
+      }
+      //end xyu40@gatech.edu
     }
 
     return result;
@@ -1722,6 +1772,9 @@ public class JobInProgress {
     Task result = reduces[target].getTaskToRun(tts.getTrackerName());
     if (result != null) {
       addRunningTaskToTIP(reduces[target], result.getTaskID(), tts, true);
+      if (perfstat.reduceStartTime == 0) {
+        perfstat.reduceStartTime = reduces[target].getExecStartTime();
+      }
     }
 
     return result;
@@ -2871,6 +2924,9 @@ public class JobInProgress {
       }
      
       this.finishTime = jobtracker.getClock().getTime();
+      //added by xyu40@gatech.edu
+      perfstat.jobEndTime = this.finishTime;
+      //end xyu40@gatech.edu
       LOG.info("Job " + this.status.getJobID() + 
       " has completed successfully.");
 
@@ -2909,6 +2965,9 @@ public class JobInProgress {
     if ((status.getRunState() == JobStatus.RUNNING) ||
         (status.getRunState() == JobStatus.PREP)) {
       this.finishTime = jobtracker.getClock().getTime();
+      //added by xyu40@gatech.edu
+      perfstat.jobEndTime = this.finishTime;
+      //end xyu40@gatech.edu
       this.status.setMapProgress(1.0f);
       this.status.setReduceProgress(1.0f);
       this.status.setCleanupProgress(1.0f);
@@ -3645,6 +3704,27 @@ public class JobInProgress {
           .add("jobName", profile.getJobName());
 
       LOG.info(summary);
+
+      //added by xyu40@gatech.edu
+      LOG.info("==>" + job.getJobID() + 
+               " perf summary. " + 
+               " jobStartTime: " + job.perfstat.jobStartTime + 
+               " jobEndTime: " + job.perfstat.jobEndTime + 
+               " mapStartTime: " + job.perfstat.mapStartTime + 
+               " mapEndTime: " + job.perfstat.mapEndTime + 
+               " reduceStartTime: " + job.perfstat.reduceStartTime + 
+               " reduceEndTime: " + job.perfstat.reduceEndTime);
+      LOG.info("==>" + job.getJobID() + 
+               " perf stat. " + 
+               " jobStart--mapStart: " + 
+               (job.perfstat.mapStartTime - job.perfstat.jobStartTime) + 
+               " mapStart--mapEnd: " + 
+               (job.perfstat.mapEndTime - job.perfstat.mapStartTime) + 
+               " reduceStart--reduceEnd: " + 
+               (job.perfstat.reduceEndTime - job.perfstat.reduceStartTime) + 
+               " reduceEnd--jobEnd: " + 
+               (job.perfstat.jobEndTime - job.perfstat.reduceEndTime));
+      //end xyu40@gatech.edu
     }
   }
 

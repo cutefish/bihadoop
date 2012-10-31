@@ -77,8 +77,9 @@ public class MatMulNaive {
         System.out.println("calculate block: " + blockPath);
         //prepare for input
         FSDataInputStream in = fs.open(blockPath);
-        DataInputStream dataIn = new DataInputStream(
-            new BufferedInputStream(in));
+        //DataInputStream dataIn = new DataInputStream(
+        //    new BufferedInputStream(in));
+        DataInputStream dataIn = new DataInputStream(in);
         //prepare for context write
         String CRowId = "" + rowBlockId;
         String CColId = blockPath.toString().split("_")[2];
