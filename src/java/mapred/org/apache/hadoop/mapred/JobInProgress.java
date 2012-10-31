@@ -69,6 +69,7 @@ import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.util.StringUtils;
 
 //Added by xyu40@gatech.edu
+import java.util.Date;
 import org.apache.hadoop.fs.Segment;
 import org.apache.hadoop.map2.Map2MetaInfo;
 import org.apache.hadoop.map2.MapTaskPacker;
@@ -3714,12 +3715,12 @@ public class JobInProgress {
           job.perfstat.mapEndTime : job.perfstat.reduceEndTime;
       LOG.info("==>" + job.getJobID() + 
                " perf summary. " + 
-               " jobStartTime: " + job.perfstat.jobStartTime + 
-               " jobEndTime: " + job.perfstat.jobEndTime + 
-               " mapStartTime: " + job.perfstat.mapStartTime + 
-               " mapEndTime: " + job.perfstat.mapEndTime + 
-               " reduceStartTime: " + job.perfstat.reduceStartTime + 
-               " reduceEndTime: " + job.perfstat.reduceEndTime);
+               " jobStartTime: " + new Date(job.perfstat.jobStartTime) + 
+               " jobEndTime: " + new Date(job.perfstat.jobEndTime) + 
+               " mapStartTime: " + new Date(job.perfstat.mapStartTime) + 
+               " mapEndTime: " + new Date(job.perfstat.mapEndTime) + 
+               " reduceStartTime: " + new Date(job.perfstat.reduceStartTime) + 
+               " reduceEndTime: " + new Date(job.perfstat.reduceEndTime));
       LOG.info("==>" + job.getJobID() + 
                " perf stat. " + 
                " jobStart--mapStart: " + 
