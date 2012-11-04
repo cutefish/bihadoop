@@ -41,6 +41,7 @@ public class MatMulNaive {
     public void setup(Context context) 
         throws IOException, InterruptedException {
       Configuration conf = context.getConfiguration();
+      System.out.println("tid: " + conf.get("mapred.task.id"));
       int blockSize = conf.getInt("matmul.block.size", 1);
       numRowsInBlock = conf.getInt("matmul.num.rows.in.block", 1);
       numColsInBlock = blockSize / numRowsInBlock;
@@ -72,6 +73,7 @@ public class MatMulNaive {
       Path inPath = new Path(conf.get("matmul.in.path"));
       FileStatus[] files = fs.listStatus(inPath);
 
+      double[] rowA = new double[numColsInBlock];
       for (FileStatus file : files) {
         Path blockPath = file.getPath();
         System.out.println("calculate block: " + blockPath);
@@ -93,7 +95,6 @@ public class MatMulNaive {
         //do the multiplication
         long readTime = 0, calcTime = 0;
         for (int i = 0; i < numRowsInBlock; ++i) {
-          double[] rowA = new double[numColsInBlock];
           start = System.currentTimeMillis();
           for (int j = 0; j < numColsInBlock; ++j) {
             rowA[j] = dataIn.readDouble();

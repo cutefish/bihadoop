@@ -64,7 +64,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
   private long diskCacheSizePerUser;
   private long memCacheSizePerUser;
   private String localCacheDir;
-  private boolean cacheReplica = true;
+  private boolean cacheReplica = false;
   private long alignedBlockSize;
   private Cache cache;
   private CacheFileFreeStore freeStore = new CacheFileFreeStore();
@@ -93,7 +93,7 @@ public class BlockCacheServer implements BlockCacheProtocol, Runnable {
       throw new IOException(
           "Cannot set local cache dir at " + localCacheDir);
     }
-    cacheReplica = conf.getBoolean(CACHE_REPLICA, true);
+    cacheReplica = conf.getBoolean(CACHE_REPLICA, false);
     alignedBlockSize = conf.getLong(ALIGNED_BLOCK_SIZE, DEFAULT_ALIGNMENT_SIZE);
 
     cache = new Cache();
